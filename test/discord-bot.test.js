@@ -102,6 +102,17 @@ test("parses owner-only Codex delegation commands", () => {
   assert.deepEqual(parseCodexDelegation("@JJ spawn codex :: inspect the project"), {
     task: "inspect the project",
   });
+  assert.deepEqual(
+    parseCodexDelegation("@JJ CODEX YOLO :: find the target repository and run its tests"),
+    {
+      task: "find the target repository and run its tests",
+      yolo: true,
+    },
+  );
+  assert.deepEqual(
+    parseCodexDelegation("@JJ spawn codex :: explain the phrase codex yolo"),
+    { task: "explain the phrase codex yolo" },
+  );
   assert.deepEqual(parseCodexDelegation("@JJ spawnea un codex para crear una demo"), {
     task: "crear una demo",
   });
