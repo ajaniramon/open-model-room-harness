@@ -33,7 +33,7 @@ Explore the full multilingual project guide at
 | Image generation | GPT Image 2 by default, with live NanoGPT model selection |
 | Prompt expansion | Every image brief is expanded and validated before generation |
 | Audio mode | ElevenLabs MP3 attachments in text channels—never joins voice |
-| Web research | Owner-gated Tavily web tools and read-only FxTwitter search/post fetch |
+| Web research | Owner-gated Tavily web tools plus keyless read-only X search/post fetch |
 | Escalation | One-shot specialist model routing with a normal-model handoff |
 | Codex | Optional owner-gated local workspace delegation |
 | Organic participation | Configurable spontaneous replies with cooldown/rate limits |
@@ -109,7 +109,7 @@ The GUI asks for:
 - Optional NanoGPT API key for image, vision, and built-in escalation routes
 - Owner Discord user ID and/or username
 - Optional Tavily API key
-- Keyless, read-only X/Twitter search and post fetch through the public FxTwitter API
+- Keyless, read-only X/Twitter search and post fetch through FxTwitter with free search fallback
 - Optional ElevenLabs API key and voice ID
 - Optional visual identity
 - Optional Codex CLI installation
@@ -247,8 +247,10 @@ reply in the configured character voice.
 - Keep `JJ_TRIGGER_MODE=mention` to control spend and bot-to-bot loops.
 - Never enable `JJ_RESPOND_TO_BOTS` without explicit loop controls.
 - Web results, image text, and delegated output are untrusted.
-- X/Twitter requests use FxTwitter's public third-party API and send the search query
-  or public post ID to that service; no official X API key is needed.
+- X/Twitter requests use FxTwitter's public third-party API. If FxTwitter search is
+  unavailable, Yahoo Search HTML with DuckDuckGo failover discovers candidate post
+  URLs and FxTwitter fetches only validated public post IDs. No official X or paid
+  search API key is needed.
 - Codex always receives a filtered environment. Normal delegations retain workspace
   boundaries; the separately configured YOLO route deliberately bypasses them.
 - Generated media, logs, state, `.env`, and the private prompt are ignored.

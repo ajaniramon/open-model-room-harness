@@ -9,7 +9,7 @@ import { JJ_VISUAL_IDENTITY_SYSTEM_SECTION } from "./jj-identity.js";
 import { ModelClient } from "./model-client.js";
 import { VisionAnalyzer } from "./vision.js";
 import { TavilyClient, WebToolRuntime } from "./web-tools.js";
-import { FxTwitterClient } from "./x-tools.js";
+import { FxTwitterClient, KeylessXDiscovery } from "./x-tools.js";
 
 const promptUrl = new URL("./system-prompt.txt", import.meta.url);
 for (const [name, value] of [
@@ -25,9 +25,10 @@ for (const [name, value] of [
 const systemPrompt =
   `${(await readFile(fileURLToPath(promptUrl), "utf8")).trim()}\n\n` +
   JJ_VISUAL_IDENTITY_SYSTEM_SECTION;
+const xDiscovery = new KeylessXDiscovery();
 const webTools = new WebToolRuntime(
   new TavilyClient(config.tavilyApiKey),
-  new FxTwitterClient(),
+  new FxTwitterClient(fetch, undefined, xDiscovery.searchPostUrls.bind(xDiscovery)),
 );
 const modelClient = new ModelClient(config, fetch, webTools);
 const audioModeState = new AudioModeState(config.audioModeStatePath);

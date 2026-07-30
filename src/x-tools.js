@@ -68,6 +68,148 @@ function postId(value) {
   }
 }
 
+function decodeHtmlAttribute(value) {
+  return String(value || "")
+    .replaceAll("&amp;", "&")
+    .replaceAll("&#x2F;", "/")
+    .replaceAll("&#47;", "/")
+    .replaceAll("&quot;", '"');
+}
+
+function discoveredPostUrl(value) {
+  try {
+    let candidate = decodeHtmlAttribute(value);
+    if (candidate.startsWith("//")) candidate = `https:${candidate}`;
+    let url = new URL(candidate);
+    if (
+      new Set(["duckduckgo.com", "www.duckduckgo.com", "html.duckduckgo.com"]).has(
+        url.hostname.toLowerCase(),
+      ) &&
+      url.pathname === "/l/"
+    ) {
+      candidate = url.searchParams.get("uddg") || "";
+      url = new URL(candidate);
+    }
+    if (!new Set(["x.com", "www.x.com", "twitter.com", "www.twitter.com"]).has(
+      url.hostname.toLowerCase(),
+    )) {
+      return "";
+    }
+    const match = url.pathname.match(/^\/([^/]+)\/status\/(\d{2,20})(?:\/|$)/);
+    return match ? `https://x.com/${match[1]}/status/${match[2]}` : "";
+  } catch {
+    return "";
+  }
+}
+
+export class KeylessXDiscovery {
+  constructor(fetchImplementation = fetch) {
+    this.fetch = fetchImplementation;
+  }
+
+  async fetchHtml(url, provider) {
+    let lastError;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 20_000);
+      try {
+        const response = await this.fetch(url, {
+          headers: {
+            Accept: "text/html",
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
+          },
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          lastError = new Error(`${provider} returned HTTP ${response.status}.`);
+          continue;
+        }
+        const html = await response.text();
+        if (html.length > 2_000_000) {
+          throw new Error(`${provider} response was unexpectedly large.`);
+        }
+        return html;
+      } catch (error) {
+        lastError = error;
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+    throw lastError || new Error(`${provider} request failed.`);
+  }
+
+  yahooUrls(html, count) {
+    const urls = [];
+    for (const anchor of html.match(/<a\b[^>]*href=["'][^"']+["'][^>]*>/gi) || []) {
+      const href = decodeHtmlAttribute(anchor.match(/\bhref=["']([^"']+)["']/i)?.[1]);
+      const redirectTarget = href.match(/\/RU=([^/]+)\/RK=/i)?.[1];
+      let candidate = href;
+      if (redirectTarget) {
+        try {
+          candidate = decodeURIComponent(redirectTarget);
+        } catch {
+          continue;
+        }
+      }
+      const normalized = discoveredPostUrl(candidate);
+      if (normalized && !urls.includes(normalized)) urls.push(normalized);
+      if (urls.length >= count) break;
+    }
+    return urls;
+  }
+
+  duckDuckGoUrls(html, count) {
+    if (/anomaly-modal|captcha|challenge-form/i.test(html)) return [];
+    const urls = [];
+    for (const anchor of html.match(/<a\b[^>]*class=["'][^"']*\bresult__a\b[^"']*["'][^>]*>/gi) || []) {
+      const href = anchor.match(/\bhref=["']([^"']+)["']/i)?.[1];
+      const normalized = discoveredPostUrl(href);
+      if (normalized && !urls.includes(normalized)) urls.push(normalized);
+      if (urls.length >= count) break;
+    }
+    return urls;
+  }
+
+  async searchPostUrls(query, maxResults = 10) {
+    if (typeof query !== "string" || !query.trim()) {
+      throw new Error("query must be a non-empty string.");
+    }
+    let count = Number.parseInt(maxResults || 10, 10);
+    if (!Number.isFinite(count)) count = 10;
+    count = Math.max(1, Math.min(count, 20));
+    const searchQuery = `site:x.com ${query.trim()}`;
+    const failures = [];
+
+    try {
+      const yahooUrl = new URL("https://search.yahoo.com/search");
+      yahooUrl.search = new URLSearchParams({ p: searchQuery, n: String(count) });
+      const yahooUrls = this.yahooUrls(await this.fetchHtml(yahooUrl, "Yahoo Search"), count);
+      if (yahooUrls.length) return yahooUrls;
+      failures.push("Yahoo Search returned no post URLs");
+    } catch (error) {
+      failures.push(error.message || String(error));
+    }
+
+    try {
+      const duckUrl = new URL("https://html.duckduckgo.com/html/");
+      duckUrl.search = new URLSearchParams({ q: searchQuery });
+      const duckUrls = this.duckDuckGoUrls(
+        await this.fetchHtml(duckUrl, "DuckDuckGo"),
+        count,
+      );
+      if (duckUrls.length) return duckUrls;
+      failures.push("DuckDuckGo returned no post URLs");
+    } catch (error) {
+      failures.push(error.message || String(error));
+    }
+
+    throw new Error(failures.join("; "));
+  }
+}
+
+export { KeylessXDiscovery as DuckDuckGoXDiscovery };
+
 function oneLine(value, maxLength = 700) {
   const text = String(value || "").split(/\s+/).filter(Boolean).join(" ");
   return text.length > maxLength ? `${text.slice(0, maxLength)}…` : text;
@@ -100,9 +242,14 @@ function formatPost(post, index) {
 }
 
 export class FxTwitterClient {
-  constructor(fetchImplementation = fetch, baseUrl = "https://api.fxtwitter.com") {
+  constructor(
+    fetchImplementation = fetch,
+    baseUrl = "https://api.fxtwitter.com",
+    discoverPostUrls = null,
+  ) {
     this.fetch = fetchImplementation;
     this.baseUrl = baseUrl.replace(/\/+$/, "");
+    this.discoverPostUrls = discoverPostUrls;
   }
 
   async request(path) {
@@ -110,13 +257,21 @@ export class FxTwitterClient {
     const timeout = setTimeout(() => controller.abort(), 20_000);
     try {
       const response = await this.fetch(`${this.baseUrl}${path}`, {
-        headers: { Accept: "application/json" },
+        headers: {
+          Accept: "application/json",
+          "User-Agent":
+            "OpenModelRoomHarness/1.3 (+https://github.com/ajaniramon/open-model-room-harness)",
+        },
         signal: controller.signal,
       });
       const data = await response.json().catch(() => null);
       if (!response.ok || !data || data.code >= 400) {
         const detail = oneLine(data?.message || response.statusText || "request failed", 200);
-        return { error: `ERROR: FxTwitter returned ${data?.code || response.status}: ${detail}` };
+        return {
+          error: `ERROR: FxTwitter returned ${data?.code || response.status}: ${detail}`,
+          status: Number(data?.code || response.status),
+          data,
+        };
       }
       return { data };
     } catch (error) {
@@ -141,9 +296,41 @@ export class FxTwitterClient {
     const selectedFeed = new Set(["latest", "top", "media"]).has(feed) ? feed : "latest";
     const params = new URLSearchParams({ q: query.trim(), count: String(count), feed: selectedFeed });
     const result = await this.request(`/2/search?${params}`);
-    if (result.error) return result.error;
+    if (result.error) {
+      const emptySearch =
+        result.status === 404 &&
+        Array.isArray(result.data?.results) &&
+        result.data.results.length === 0;
+      if (emptySearch && this.discoverPostUrls) {
+        return this.searchWithDiscoveryFallback(query.trim(), count);
+      }
+      return result.error;
+    }
     const posts = Array.isArray(result.data.results) ? result.data.results.slice(0, count) : [];
+    if (!posts.length && this.discoverPostUrls) {
+      return this.searchWithDiscoveryFallback(query.trim(), count);
+    }
     return posts.map((post, index) => formatPost(post, index)).join("\n\n") || "(no X posts found)";
+  }
+
+  async searchWithDiscoveryFallback(query, count) {
+    try {
+      const urls = await this.discoverPostUrls(query, count);
+      if (!Array.isArray(urls) || !urls.length) return "(no X posts found)";
+      const fetched = await Promise.all(urls.slice(0, count).map((url) => this.fetchPost(url)));
+      const posts = fetched.filter((post) => post && !post.startsWith("ERROR:"));
+      if (!posts.length) return "(no X posts found)";
+      return (
+        "FxTwitter live search was unavailable; these posts were discovered through " +
+        "a free keyless web-search fallback and fetched from FxTwitter by validated " +
+        "public post ID.\n\n" +
+        posts.map((post, index) => `${index + 1}. ${post}`).join("\n\n")
+      );
+    } catch (error) {
+      return `ERROR: X/Twitter search fallback failed: ${error.name || "Error"}: ${
+        error.message || error
+      }`;
+    }
   }
 
   async fetchPost(value) {
