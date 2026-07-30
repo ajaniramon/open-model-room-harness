@@ -182,6 +182,7 @@ allowed channel to trigger a model request.
 ```text
 @JJ search the web for the latest Node.js release notes
 @JJ escalate to kimi-k3 :: review this deployment plan
+@JJ escalate to grok-4.5 :: challenge the assumptions in this design
 @JJ spawn codex :: inspect this workspace and run the tests
 @JJ CODEX YOLO :: find the target repository, implement the requested change, and run its tests
 @JJ enable audio mode

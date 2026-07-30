@@ -670,7 +670,7 @@ export function createDiscordBot({
             response =
               `*JJ checks the specialist roster twice.* I don't have an approved route for ` +
               `\`${escalationRequest.requestedModel}\`. Available aliases: ` +
-              `\`mimo-pro\`, \`opus-5\`, \`gpt-4o-nov\`, and \`kimi-k3\`.`;
+              `\`mimo-pro\`, \`opus-5\`, \`gpt-4o-nov\`, \`kimi-k3\`, and \`grok-4.5\`.`;
           } else if (escalationAuthorized) {
             const specialistContext = await buildContext(
               message,

@@ -28,6 +28,24 @@ test("routes Kimi K3 escalation aliases through NanoGPT paid API", () => {
   );
 });
 
+test("routes Grok 4.5 escalation aliases through NanoGPT paid API", () => {
+  const expected = {
+    provider: "nanogpt",
+    model: "x-ai/grok-4.5",
+    baseUrl: "https://nano-gpt.com/api/v1/chat/completions",
+    reasoningEffort: "high",
+    billing: "paid",
+  };
+
+  assert.deepEqual(config.escalationModels["grok-4.5"], expected);
+  assert.equal(config.escalationModels["grok 4.5"], config.escalationModels["grok-4.5"]);
+  assert.equal(config.escalationModels.grok45, config.escalationModels["grok-4.5"]);
+  assert.equal(
+    config.escalationModels["x-ai/grok-4.5"],
+    config.escalationModels["grok-4.5"],
+  );
+});
+
 test("defaults image generation to GPT Image 2", () => {
   assert.equal(config.imageApiBaseUrl, "https://nano-gpt.com/api/v1");
   assert.equal(config.imageDefaultModel, "gpt-image-2");
