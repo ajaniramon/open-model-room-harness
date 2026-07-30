@@ -1,0 +1,15 @@
+const { contextBridge, ipcRenderer } = require("electron");
+
+contextBridge.exposeInMainWorld("installer", {
+  getStatus: () => ipcRenderer.invoke("installer:status"),
+  listModels: (provider, apiKey) =>
+    ipcRenderer.invoke("installer:list-models", { provider, apiKey }),
+  install: (configuration) => ipcRenderer.invoke("installer:install", configuration),
+  onProgress: (listener) => {
+    const handler = (_event, payload) => listener(payload);
+    ipcRenderer.on("installer:progress", handler);
+    return () => ipcRenderer.removeListener("installer:progress", handler);
+  },
+  minimize: () => ipcRenderer.send("window:minimize"),
+  close: () => ipcRenderer.send("window:close"),
+});

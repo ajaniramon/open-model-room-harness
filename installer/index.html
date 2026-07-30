@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'" />
+    <title>Open Model Room — Install Console</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="window">
+      <header class="titlebar">
+        <div class="title">
+          <span class="signal"></span>
+          <strong>OPEN MODEL ROOM</strong>
+          <i>// INSTALL CONSOLE 1.3</i>
+        </div>
+        <div class="window-actions">
+          <button id="minimize" type="button" aria-label="Minimize">—</button>
+          <button id="close" type="button" aria-label="Close">×</button>
+        </div>
+      </header>
+
+      <div class="release-line">
+        <span>PRIVATE CONFIGURATION UTILITY</span>
+        <span>FIVE PROVIDERS // ONE DISCORD ROOM</span>
+        <span>LOCAL EXECUTION ONLY</span>
+      </div>
+
+      <main>
+        <nav aria-label="Installer sections">
+          <div class="product">
+            <span>OPEN</span>
+            <strong>MODEL</strong>
+            <span>ROOM</span>
+          </div>
+          <ol>
+            <li class="active"><b>01</b><span>PR0ViDER</span><i>Primary model route</i></li>
+            <li><b>02</b><span>DiSCORD</span><i>Bot and owner identity</i></li>
+            <li><b>03</b><span>0PTiONS</span><i>Optional capabilities</i></li>
+            <li><b>04</b><span>GENERATE</span><i>Write and verify</i></li>
+          </ol>
+          <div class="integrity">
+            <span>CONFIG INTEGRITY</span>
+            <i><b id="meter-fill"></b></i>
+            <small id="integrity-label">AWAITING INPUT</small>
+          </div>
+        </nav>
+
+        <section class="workspace">
+          <div class="status-strip">
+            <span class="led"></span>
+            <strong id="system-status">PROBiNG LOCAL SYSTEM...</strong>
+            <code id="runtime">NODE -- / UNKNOWN</code>
+          </div>
+
+          <form id="setup-form" autocomplete="off">
+            <fieldset>
+              <legend><b>01</b> PR0ViDER, CH00SE THE SiGNAL</legend>
+              <div class="provider-grid" id="providers"></div>
+              <div class="field-grid">
+                <label class="field">
+                  <span class="model-label">
+                    M0DEL.id, SELECT THE BRAiN
+                    <small id="model-status">PASTE KEY TO LOAD CATALOG</small>
+                  </span>
+                  <div class="model-picker">
+                    <input id="model" name="model" required maxlength="300" spellcheck="false" list="model-options" />
+                    <datalist id="model-options"></datalist>
+                    <button id="refresh-models" type="button" title="Reload provider models">SCAN</button>
+                  </div>
+                </label>
+                <label class="field">
+                  <span>API.KEY, FiND THE GOOD KEY FOR <b id="provider-name">NANOGPT</b></span>
+                  <div class="secret-wrap">
+                    <input id="primary-api-key" name="primaryApiKey" type="password" required maxlength="20000" />
+                    <button class="peek" type="button" data-peek="primary-api-key">ViEW</button>
+                  </div>
+                </label>
+              </div>
+              <label class="field sidecar hidden" id="nanogpt-sidecar">
+                <span>NAN0GPT.KEY, ARM ViSiON + iMAGES</span>
+                <div class="secret-wrap">
+                  <input id="nanogpt-api-key" name="nanoGptApiKey" type="password" maxlength="20000" />
+                  <button class="peek" type="button" data-peek="nanogpt-api-key">ViEW</button>
+                </div>
+              </label>
+            </fieldset>
+
+            <fieldset>
+              <legend><b>02</b> DiSCORD.exe, OPEN THE GATE</legend>
+              <label class="field">
+                <span>DiSCORD.T0KEN, DO NOT POST THiS iN CHAT</span>
+                <div class="secret-wrap">
+                  <input id="discord-token" name="discordToken" type="password" required maxlength="20000" />
+                  <button class="peek" type="button" data-peek="discord-token">ViEW</button>
+                </div>
+              </label>
+              <div class="field-grid">
+                <label class="field">
+                  <span class="label-help">
+                    0WNER.id, LOCK THE EXpENSiVE BUTTONS
+                    <button id="owner-help" class="help-button" type="button" aria-label="How to find your Discord user ID">?</button>
+                  </span>
+                  <input id="owner-id" name="ownerId" inputmode="numeric" pattern="[0-9]{15,22}" maxlength="22" placeholder="123456789012345678" />
+                </label>
+                <label class="field">
+                  <span>0WNER.NAME, FALLBACK HANDLE</span>
+                  <input id="owner-username" name="ownerUsername" maxlength="100" placeholder="_yourname" />
+                </label>
+              </div>
+              <div class="field-grid">
+                <label class="field">
+                  <span>B0T.NAME, NAME THE MENACE</span>
+                  <input id="bot-name" name="botName" maxlength="80" value="JJ" />
+                </label>
+                <label class="field">
+                  <span>ViSUAL.iD, DESCRiBE THE AVATAR</span>
+                  <input id="visual-identity" name="visualIdentity" maxlength="800" placeholder="Red-haired engineering lead..." />
+                </label>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend><b>03</b> 0PTiONAL PAYLOADS</legend>
+              <div class="field-grid">
+                <label class="field">
+                  <span>TAViLY.KEY, WEB SEARCH UPLiNK</span>
+                  <input id="tavily-api-key" name="tavilyApiKey" type="password" maxlength="20000" />
+                </label>
+                <label class="field">
+                  <span>ELEVENLABS.KEY, VOiCE SYNTH</span>
+                  <input id="elevenlabs-api-key" name="elevenLabsApiKey" type="password" maxlength="20000" />
+                </label>
+              </div>
+              <div class="option-row">
+                <label class="field">
+                  <span>VOiCE.id, PiCK THE THROAT</span>
+                  <input id="voice-id" name="voiceId" maxlength="200" value="21m00Tcm4TlvDq8ikWAM" />
+                </label>
+                <div class="toggles">
+                  <label><input name="installCodex" type="checkbox" /><span>iNSTALL CODEX.CLi</span></label>
+                  <label><input name="runTests" type="checkbox" checked /><span>RUN SELF-TEST.exe</span></label>
+                  <label id="replace-row" class="hidden"><input name="replaceExisting" type="checkbox" /><span>OVERWRiTE ExiSTiNG .env</span></label>
+                </div>
+              </div>
+            </fieldset>
+
+            <div class="action-row">
+              <button id="generate" class="generate" type="submit">
+                <span>GENERATE THE RiG</span><small>WRITE CONFIGURATION + VERIFY</small>
+              </button>
+              <p id="form-error" role="alert"></p>
+            </div>
+          </form>
+        </section>
+
+        <aside class="terminal" aria-label="Installation log">
+          <header><span>INSTALL.LOG</span><code>READ ONLY</code></header>
+          <div id="log" role="log" aria-live="polite">
+            <p><b>[BOOT]</b> Awaiting operator input...</p>
+            <p><b>[SAFE]</b> Secrets remain on this machine.</p>
+          </div>
+          <footer>
+            <span id="progress-label">iDLE</span>
+            <i><b id="progress"></b></i>
+            <strong id="percent">00%</strong>
+          </footer>
+        </aside>
+      </main>
+
+      <footer class="footer">
+        <span>NO TELEMETRY</span>
+        <span>NO REMOTE CONTROL PLANE</span>
+        <span>CONFIGURATION NEVER LEAVES THIS MACHINE</span>
+      </footer>
+    </div>
+
+    <dialog id="owner-help-dialog" aria-labelledby="owner-help-title">
+      <div class="dialog-titlebar">
+        <strong id="owner-help-title">FiND YOUR DiSCORD USER iD</strong>
+        <button id="owner-help-close" type="button" aria-label="Close help">×</button>
+      </div>
+      <div class="dialog-body">
+        <p class="dialog-lead">The numeric ID is the most reliable owner lock because it does not change when you rename your account.</p>
+        <section>
+          <b>DESKTOP</b>
+          <ol>
+            <li>Open Discord <strong>User Settings</strong> using the cogwheel.</li>
+            <li>Open <strong>Advanced</strong> and enable <strong>Developer Mode</strong>.</li>
+            <li>Right-click your avatar or username in any server.</li>
+            <li>Select <strong>Copy User ID</strong>, then paste it into <code>0WNER.id</code>.</li>
+          </ol>
+        </section>
+        <section>
+          <b>MOBILE</b>
+          <ol>
+            <li>Open your avatar, then the settings cogwheel.</li>
+            <li>Open <strong>Advanced</strong> and enable <strong>Developer Mode</strong>.</li>
+            <li>Open your profile, tap <strong>•••</strong>, then <strong>Copy User ID</strong>.</li>
+          </ol>
+        </section>
+        <p class="dialog-note">NO ID RiGHT NOW? Leave this field empty and enter your exact Discord handle in <code>0WNER.NAME</code>. The numeric ID is still recommended.</p>
+      </div>
+      <div class="dialog-actions">
+        <button id="owner-help-done" type="button">UNDERSTOOD.exe</button>
+      </div>
+    </dialog>
+    <script src="./app.js"></script>
+  </body>
+</html>
