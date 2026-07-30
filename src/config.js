@@ -130,6 +130,13 @@ const kimiK3Route = Object.freeze({
   reasoningEffort: "high",
   billing: "paid",
 });
+const grok45Route = Object.freeze({
+  provider: "nanogpt",
+  model: "x-ai/grok-4.5",
+  baseUrl: paidEndpoint,
+  reasoningEffort: "high",
+  billing: "paid",
+});
 const escalationModels = Object.freeze({
   "mimo-pro": mimoProRoute,
   "mimo pro": mimoProRoute,
@@ -149,6 +156,10 @@ const escalationModels = Object.freeze({
   k3: kimiK3Route,
   "moonshot/kimi-k3": kimiK3Route,
   "moonshotai/kimi-k3": kimiK3Route,
+  "grok-4.5": grok45Route,
+  "grok 4.5": grok45Route,
+  grok45: grok45Route,
+  "x-ai/grok-4.5": grok45Route,
 });
 
 export const config = Object.freeze({
