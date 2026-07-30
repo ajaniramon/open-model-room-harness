@@ -150,6 +150,7 @@ export function resolveEscalationModel(requestedModel, config) {
 export function parseCodexDelegation(content) {
   const text = String(content || "").trim();
   const patterns = [
+    /\b(?:please\s+)?(?:spawn|launch|run)\s+(?:a\s+)?codex(?:\s+agent)?\s+(?:and\s+(?:then\s+)?)?(?:tell|ask)\s+(?:him|her|it|them|codex)\s+to\s+([\s\S]+)$/i,
     /\b(?:please\s+)?spawn\s+(?:a\s+)?codex\s+agent\s+to\s+([\s\S]+)$/i,
     /\b(?:spawn|launch|run)\s+(?:a\s+)?codex\s*(?:::|,)\s*([\s\S]+)$/i,
     /\bdelegate\s+to\s+codex\s*(?:::|,)\s*([\s\S]+)$/i,
