@@ -56,6 +56,9 @@ test("requires an explicit web action before exposing tools", () => {
   assert.equal(requestsWebTools("@JJ busca noticias actuales"), true);
   assert.equal(requestsWebTools("@JJ fetch https://example.com"), true);
   assert.equal(requestsWebTools("@JJ resume https://example.com"), true);
+  assert.equal(requestsWebTools("@JJ search X for local AI news"), true);
+  assert.equal(requestsWebTools("@JJ read https://x.com/jack/status/20"), true);
+  assert.equal(requestsWebTools("@JJ tweet me a joke"), false);
   assert.equal(requestsWebTools("@JJ qué opinas de este enlace https://example.com"), false);
   assert.equal(requestsWebTools("@JJ cuéntame un chiste"), false);
 });

@@ -41,6 +41,28 @@ test("returns recoverable errors for malformed model tool arguments", async () =
   assert.match(result, /^ERROR: invalid JSON/);
 });
 
+test("routes read-only X tools through the shared authorized runtime", async () => {
+  const calls = [];
+  const fxTwitter = {
+    search: async (...args) => (calls.push(["search", ...args]), "search result"),
+    fetchPost: async (...args) => (calls.push(["fetch", ...args]), "post result"),
+  };
+  const runtime = new WebToolRuntime(new TavilyClient("tvly-test"), fxTwitter);
+  assert.deepEqual(
+    runtime.tools.map((tool) => tool.function.name),
+    ["web_search", "web_fetch", "x_search", "x_fetch"],
+  );
+  assert.equal(
+    await runtime.call("x_search", { query: "agents", max_results: 4, feed: "top" }),
+    "search result",
+  );
+  assert.equal(await runtime.call("x_fetch", { post: "123" }), "post result");
+  assert.deepEqual(calls, [
+    ["search", "agents", 4, "top"],
+    ["fetch", "123"],
+  ]);
+});
+
 test("ports Tavily Extract with clamped output and raw-content formatting", async () => {
   let request;
   const mockFetch = async (url, options) => {
