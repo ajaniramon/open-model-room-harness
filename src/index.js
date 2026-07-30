@@ -9,6 +9,7 @@ import { JJ_VISUAL_IDENTITY_SYSTEM_SECTION } from "./jj-identity.js";
 import { ModelClient } from "./model-client.js";
 import { VisionAnalyzer } from "./vision.js";
 import { TavilyClient, WebToolRuntime } from "./web-tools.js";
+import { FxTwitterClient } from "./x-tools.js";
 
 const promptUrl = new URL("./system-prompt.txt", import.meta.url);
 for (const [name, value] of [
@@ -24,7 +25,10 @@ for (const [name, value] of [
 const systemPrompt =
   `${(await readFile(fileURLToPath(promptUrl), "utf8")).trim()}\n\n` +
   JJ_VISUAL_IDENTITY_SYSTEM_SECTION;
-const webTools = new WebToolRuntime(new TavilyClient(config.tavilyApiKey));
+const webTools = new WebToolRuntime(
+  new TavilyClient(config.tavilyApiKey),
+  new FxTwitterClient(),
+);
 const modelClient = new ModelClient(config, fetch, webTools);
 const audioModeState = new AudioModeState(config.audioModeStatePath);
 await audioModeState.load();
