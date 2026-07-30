@@ -1,0 +1,16 @@
+node_modules/
+.env
+src/system-prompt.txt
+coverage/
+site-dist/
+artifacts/
+assets/
+logs/
+state/
+codex-workspace/
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
