@@ -1,3 +1,5 @@
+import { X_FETCH_TOOL, X_SEARCH_TOOL } from "./x-tools.js";
+
 export const WEB_SEARCH_TOOL = Object.freeze({
   type: "function",
   function: {
@@ -149,9 +151,10 @@ export class TavilyClient {
 }
 
 export class WebToolRuntime {
-  constructor(tavilyClient) {
+  constructor(tavilyClient, fxTwitterClient = null) {
     this.tavily = tavilyClient;
-    this.tools = [WEB_SEARCH_TOOL, WEB_FETCH_TOOL];
+    this.fxTwitter = fxTwitterClient;
+    this.tools = [WEB_SEARCH_TOOL, WEB_FETCH_TOOL, X_SEARCH_TOOL, X_FETCH_TOOL];
   }
 
   async call(name, rawArguments) {
@@ -168,6 +171,11 @@ export class WebToolRuntime {
       return `ERROR: arguments for '${name}' must be a JSON object.`;
     }
     if (name === "web_search") return this.tavily.search(args.query, args.max_results);
-    return this.tavily.fetchUrl(args.url, args.max_chars);
+    if (name === "web_fetch") return this.tavily.fetchUrl(args.url, args.max_chars);
+    if (!this.fxTwitter) return "ERROR: X/Twitter tools are not configured.";
+    if (name === "x_search") {
+      return this.fxTwitter.search(args.query, args.max_results, args.feed);
+    }
+    return this.fxTwitter.fetchPost(args.post);
   }
 }

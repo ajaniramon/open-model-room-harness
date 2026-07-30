@@ -33,7 +33,7 @@ Explore the full multilingual project guide at
 | Image generation | GPT Image 2 by default, with live NanoGPT model selection |
 | Prompt expansion | Every image brief is expanded and validated before generation |
 | Audio mode | ElevenLabs MP3 attachments in text channels—never joins voice |
-| Web research | Owner-gated Tavily search and URL extraction |
+| Web research | Owner-gated Tavily web tools and read-only FxTwitter search/post fetch |
 | Escalation | One-shot specialist model routing with a normal-model handoff |
 | Codex | Optional owner-gated local workspace delegation |
 | Organic participation | Configurable spontaneous replies with cooldown/rate limits |
@@ -109,6 +109,7 @@ The GUI asks for:
 - Optional NanoGPT API key for image, vision, and built-in escalation routes
 - Owner Discord user ID and/or username
 - Optional Tavily API key
+- Keyless, read-only X/Twitter search and post fetch through the public FxTwitter API
 - Optional ElevenLabs API key and voice ID
 - Optional visual identity
 - Optional Codex CLI installation
@@ -181,6 +182,8 @@ allowed channel to trigger a model request.
 
 ```text
 @JJ search the web for the latest Node.js release notes
+@JJ search X for posts about local AI agents
+@JJ read https://x.com/jack/status/20
 @JJ escalate to kimi-k3 :: review this deployment plan
 @JJ escalate to grok-4.5 :: challenge the assumptions in this design
 @JJ spawn codex :: inspect this workspace and run the tests
@@ -190,7 +193,7 @@ allowed channel to trigger a model request.
 @JJ generate an image using model nano-banana-2-lite :: a goblin SRE
 ```
 
-Web, image generation, escalation, audio mode, and Codex are owner-gated.
+Web and X/Twitter research, image generation, escalation, audio mode, and Codex are owner-gated.
 Audio mode sends MP3 replies only when the configured owner directly addresses the
 bot; other participants continue receiving text.
 
@@ -244,6 +247,8 @@ reply in the configured character voice.
 - Keep `JJ_TRIGGER_MODE=mention` to control spend and bot-to-bot loops.
 - Never enable `JJ_RESPOND_TO_BOTS` without explicit loop controls.
 - Web results, image text, and delegated output are untrusted.
+- X/Twitter requests use FxTwitter's public third-party API and send the search query
+  or public post ID to that service; no official X API key is needed.
 - Codex always receives a filtered environment. Normal delegations retain workspace
   boundaries; the separately configured YOLO route deliberately bypasses them.
 - Generated media, logs, state, `.env`, and the private prompt are ignored.
