@@ -114,6 +114,19 @@ test("parses owner-only Codex delegation commands", () => {
         "assess memory-implementation-plan. Tell him to find my-harness directory and cross the file with the codebase and advise if viable",
     },
   );
+  assert.deepEqual(
+    parseCodexDelegation(
+      "@JJ please spawn codex agent and tell him to find open-model-room-harness directory and design an implementation plan for X/Twitter integration (read-only, for now only search and post fetch). Advise when done. Do not provide code details over this chat.",
+    ),
+    {
+      task:
+        "find open-model-room-harness directory and design an implementation plan for X/Twitter integration (read-only, for now only search and post fetch). Advise when done. Do not provide code details over this chat.",
+    },
+  );
+  assert.deepEqual(
+    parseCodexDelegation("@JJ launch a codex agent and ask it to inspect the workspace"),
+    { task: "inspect the workspace" },
+  );
   assert.equal(parseCodexDelegation("@JJ qué opinas de Codex"), null);
   assert.equal(isCodexAuthorized({ id: "999", username: "OWNER_USER" }, config), true);
   assert.equal(isCodexAuthorized({ id: "999", username: "goblin" }, config), false);
