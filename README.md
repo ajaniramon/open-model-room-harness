@@ -183,6 +183,7 @@ allowed channel to trigger a model request.
 @JJ search the web for the latest Node.js release notes
 @JJ escalate to kimi-k3 :: review this deployment plan
 @JJ spawn codex :: inspect this workspace and run the tests
+@JJ CODEX YOLO :: find the target repository, implement the requested change, and run its tests
 @JJ enable audio mode
 @JJ draw a picture of the current situation
 @JJ generate an image using model nano-banana-2-lite :: a goblin SRE
@@ -191,6 +192,12 @@ allowed channel to trigger a model request.
 Web, image generation, escalation, audio mode, and Codex are owner-gated.
 Audio mode sends MP3 replies only when the configured owner directly addresses the
 bot; other participants continue receiving text.
+
+`CODEX YOLO :: <task>` is an opt-in owner-only route for work across a broader
+local root. It is disabled by default. To use it, set `JJ_CODEX_YOLO_ENABLED=true`
+and point `JJ_CODEX_YOLO_WORKSPACE` at a directory whose contents Codex may
+intentionally read and modify. This invokes Codex with approvals and sandboxing
+bypassed; ordinary `spawn codex` commands remain workspace-bounded.
 
 ## Private character prompt
 
@@ -236,7 +243,8 @@ reply in the configured character voice.
 - Keep `JJ_TRIGGER_MODE=mention` to control spend and bot-to-bot loops.
 - Never enable `JJ_RESPOND_TO_BOTS` without explicit loop controls.
 - Web results, image text, and delegated output are untrusted.
-- Codex receives a filtered environment and workspace boundaries.
+- Codex always receives a filtered environment. Normal delegations retain workspace
+  boundaries; the separately configured YOLO route deliberately bypasses them.
 - Generated media, logs, state, `.env`, and the private prompt are ignored.
 - Rotate any credential that has ever appeared in Discord or Git history.
 

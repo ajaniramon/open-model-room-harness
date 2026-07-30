@@ -7,6 +7,7 @@ import {
   CodexRunner,
   DELEGATE_CODEX_SYSTEM_PROMPT,
   sanitizedCodexEnvironment,
+  YOLO_CODEX_SYSTEM_PROMPT,
 } from "../src/codex-runner.js";
 
 test("builds an ephemeral workspace-write Codex invocation", () => {
@@ -38,6 +39,14 @@ test("builds project work with a workspace-write sandbox", () => {
     "workspace-write",
   ]);
   assert.equal(args[args.indexOf("-C") + 1], "C:\\workspace\\jj-discord-bot");
+});
+
+test("builds explicit YOLO invocations with the Codex bypass switch", () => {
+  const args = buildCodexArgs("C:\\workspace-root", "inspect both repos", "yolo");
+  assert.ok(args.includes("--dangerously-bypass-approvals-and-sandbox"));
+  assert.equal(args.includes("--sandbox"), false);
+  assert.equal(args[args.indexOf("-C") + 1], "C:\\workspace-root");
+  assert.match(args.at(-1), new RegExp(YOLO_CODEX_SYSTEM_PROMPT.slice(0, 30)));
 });
 
 test("does not pass JJ credentials to delegated Codex", () => {
@@ -91,4 +100,39 @@ test("routes named project work to the real project with write access", async ()
     ["--sandbox", "workspace-write"],
   );
   assert.equal(result, "CODEX RESULT:\nImplemented requested change");
+});
+
+test("routes explicit YOLO work to its broader workspace", async () => {
+  let invocation;
+  const fakeSpawn = (executable, args, options) => {
+    invocation = { executable, args, options };
+    const child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.kill = () => undefined;
+    queueMicrotask(() => {
+      child.stdout.end("YOLO task complete");
+      child.emit("close", 0, null);
+    });
+    return child;
+  };
+  const runner = new CodexRunner({
+    executable: "codex.exe",
+    workspace: "C:\\bounded",
+    yoloWorkspace: "C:\\workspace-root",
+    spawnImplementation: fakeSpawn,
+  });
+
+  const result = await runner.run("inspect both repos", { yolo: true });
+  assert.equal(invocation.options.cwd, "C:\\workspace-root");
+  assert.ok(invocation.args.includes("--dangerously-bypass-approvals-and-sandbox"));
+  assert.equal(result, "CODEX RESULT:\nYOLO task complete");
+});
+
+test("rejects YOLO work when no broader workspace is configured", async () => {
+  const runner = new CodexRunner({
+    executable: "codex.exe",
+    workspace: process.cwd(),
+  });
+  assert.match(await runner.run("inspect both repos", { yolo: true }), /not configured/);
 });

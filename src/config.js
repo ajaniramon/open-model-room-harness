@@ -294,6 +294,10 @@ export const config = Object.freeze({
     (existsSync(defaultCodexExecutable) ? defaultCodexExecutable : "codex"),
   codexWorkspace: resolve(projectRoot, process.env.JJ_CODEX_WORKSPACE?.trim() || "codex-workspace"),
   codexProjectWorkspace: projectRoot,
+  codexYoloEnabled: enabled("JJ_CODEX_YOLO_ENABLED"),
+  codexYoloWorkspace: process.env.JJ_CODEX_YOLO_WORKSPACE?.trim()
+    ? resolve(projectRoot, process.env.JJ_CODEX_YOLO_WORKSPACE.trim())
+    : null,
   codexTimeoutMs: integer("JJ_CODEX_TIMEOUT_MS", 600_000, {
     min: 30_000,
     max: 3_600_000,

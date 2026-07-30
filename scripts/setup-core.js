@@ -105,6 +105,8 @@ export function buildEnvText(config) {
     JJ_IMAGE_ALLOWED_USERNAMES: ownerNames,
     JJ_CODEX_ALLOWED_USER_IDS: ownerIds,
     JJ_CODEX_ALLOWED_USERNAMES: ownerNames,
+    JJ_CODEX_YOLO_ENABLED: "false",
+    JJ_CODEX_YOLO_WORKSPACE: "",
     JJ_ESCALATION_ALLOWED_USER_IDS: ownerIds,
     JJ_ESCALATION_ALLOWED_USERNAMES: ownerNames,
   };

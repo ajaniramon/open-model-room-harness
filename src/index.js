@@ -38,6 +38,7 @@ const codexRunner = new CodexRunner({
   maxTaskChars: config.codexMaxTaskChars,
   maxResultChars: config.codexMaxResultChars,
   projectWorkspace: config.codexProjectWorkspace,
+  yoloWorkspace: config.codexYoloWorkspace,
 });
 const client = createDiscordBot({
   config,
