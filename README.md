@@ -37,6 +37,7 @@ Explore the full multilingual project guide at
 | Escalation | One-shot specialist model routing with a normal-model handoff |
 | Codex | Optional owner-gated local workspace delegation |
 | Organic participation | Configurable spontaneous replies with cooldown/rate limits |
+| Message timestamps | Every context message carries its post time, age, and time zone |
 
 The security boundary is enforced in the application, not merely described in a
 prompt. Paid and local tools are exposed only for explicitly authorized turns.
@@ -286,6 +287,21 @@ See [SECURITY.md](SECURITY.md) for operational guidance.
 The installer writes the common settings. `.env.example` documents every supported
 environment variable, including model routes, owner allowlists, rate limits,
 timeouts, media limits, and spontaneous participation.
+
+### Message timestamps
+
+Context messages reach the model with the moment they were posted and their age at
+that turn, and the system message states the current time:
+
+```
+[Discord message from Operator at 2026-08-01 13:48:00 Europe/Madrid (12m ago)]
+```
+
+The bot's own turns stay clean so it does not start writing timestamps itself, and
+the system message marks the headers as metadata it must never echo. Set
+`JJ_CONTEXT_TIMESTAMPS=false` to turn the feature off, and `JJ_TIME_ZONE` to any
+IANA name (empty uses the host time zone). The installer asks for the time zone and
+defaults to this machine's.
 
 ## Tests
 

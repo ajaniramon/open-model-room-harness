@@ -44,6 +44,17 @@ test("builds an owner-gated env without leaking unrelated provider variables", (
   assert.doesNotMatch(env, /ANTHROPIC_API_KEY/);
 });
 
+test("writes a validated time zone and enables message timestamps", () => {
+  const env = buildEnvText(validateSetup(valid({ timeZone: "Europe/Madrid" })));
+  assert.match(env, /JJ_CONTEXT_TIMESTAMPS="true"/);
+  assert.match(env, /JJ_TIME_ZONE="Europe\/Madrid"/);
+  assert.equal(
+    validateSetup(valid({ timeZone: "" })).timeZone,
+    Intl.DateTimeFormat().resolvedOptions().timeZone,
+  );
+  assert.throws(() => validateSetup(valid({ timeZone: "Mars/Olympus_Mons" })), /time zone/);
+});
+
 test("reuses the primary key as the NanoGPT sidecar when NanoGPT is primary", () => {
   const config = validateSetup(valid({ provider: "nanogpt" }));
   assert.equal(config.nanoGptApiKey, config.primaryApiKey);

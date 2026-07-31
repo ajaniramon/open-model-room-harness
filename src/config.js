@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config as loadEnv } from "dotenv";
+import { resolveTimeZone } from "./message-time.js";
 import {
   DEFAULT_LOCAL_BASE_URL,
   openAiCompatibleChatUrl,
@@ -32,6 +33,7 @@ const triggerMode = process.env.JJ_TRIGGER_MODE?.trim().toLowerCase() || "mentio
 if (!new Set(["mention", "all"]).has(triggerMode)) {
   throw new Error("JJ_TRIGGER_MODE must be either 'mention' or 'all'");
 }
+const timeZone = resolveTimeZone(process.env.JJ_TIME_ZONE);
 const chatProvider = process.env.MODEL_PROVIDER?.trim().toLowerCase() || "nanogpt";
 if (!new Set(["nanogpt", "openai", "anthropic", "xai", "gemini", "local"]).has(chatProvider)) {
   throw new Error("MODEL_PROVIDER must be one of: nanogpt, openai, anthropic, xai, gemini, local");
@@ -352,6 +354,8 @@ export const config = Object.freeze({
   }),
   respondToBots: enabled("JJ_RESPOND_TO_BOTS"),
   contextMessages: integer("JJ_CONTEXT_MESSAGES", 24, { min: 1, max: 75 }),
+  contextTimestamps: enabled("JJ_CONTEXT_TIMESTAMPS", true),
+  timeZone,
   maxOutputTokens: integer("JJ_MAX_OUTPUT_TOKENS", 4096, { min: 64, max: 8192 }),
   reasoningEffort: process.env.JJ_REASONING_EFFORT?.trim() || "high",
   apiTimeoutMs: integer("JJ_API_TIMEOUT_MS", 120_000, { min: 5_000, max: 300_000 }),

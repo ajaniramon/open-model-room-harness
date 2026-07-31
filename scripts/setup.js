@@ -2,6 +2,7 @@ import { copyFile, chmod, readFile, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
+import { resolveTimeZone } from "../src/message-time.js";
 import {
   DEFAULT_LOCAL_BASE_URL,
   normalizeOpenAiCompatibleBaseUrl,
@@ -218,6 +219,12 @@ const visualIdentity = await ask(
   "Canonical visual identity (one line, optional)",
   "A distinctive adult AI engineering team lead; customize this description.",
 );
+const timeZone = resolveTimeZone(
+  await ask(
+    "IANA time zone for message timestamps",
+    Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+  ),
+);
 const voiceId = elevenLabsApiKey
   ? await ask("ElevenLabs voice ID", "21m00Tcm4TlvDq8ikWAM")
   : "21m00Tcm4TlvDq8ikWAM";
@@ -242,6 +249,8 @@ const values = {
   ELEVENLABS_VOICE_ID: voiceId,
   JJ_VISUAL_IDENTITY: visualIdentity,
   JJ_BLOCKED_USERNAMES: "",
+  JJ_CONTEXT_TIMESTAMPS: "true",
+  JJ_TIME_ZONE: timeZone,
   JJ_WEB_ALLOWED_USER_IDS: ownerIds,
   JJ_WEB_ALLOWED_USERNAMES: ownerNames,
   JJ_AUDIO_ALLOWED_USER_IDS: ownerIds,

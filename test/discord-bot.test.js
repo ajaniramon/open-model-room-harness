@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildMessageHeader,
   isBlockedAuthor,
   isAudioModeAuthorized,
   isCodexAuthorized,
@@ -31,6 +32,54 @@ test("splits long responses below the configured limit without losing words", ()
   assert.ok(chunks.length > 1);
   assert.ok(chunks.every((chunk) => chunk.length <= 80));
   assert.equal(chunks.join(" "), input);
+});
+
+test("stamps context headers with the post time and its age", () => {
+  const header = buildMessageHeader(
+    {
+      author: { username: "operator", bot: false },
+      member: { displayName: "Operator" },
+      createdTimestamp: Date.parse("2026-08-01T11:48:00Z"),
+    },
+    {
+      timestamps: true,
+      timeZone: "Europe/Madrid",
+      now: Date.parse("2026-08-01T12:00:00Z"),
+    },
+  );
+  assert.equal(
+    header,
+    "[Discord message from Operator at 2026-08-01 13:48:00 Europe/Madrid (12m ago)]",
+  );
+});
+
+test("marks bots and omits timestamps when the feature is disabled", () => {
+  const message = {
+    author: { username: "helper", bot: true },
+    createdTimestamp: Date.parse("2026-08-01T11:48:00Z"),
+  };
+  assert.equal(
+    buildMessageHeader(message, { timestamps: false, timeZone: "UTC", now: Date.now() }),
+    "[Discord message from helper (bot)]",
+  );
+  assert.match(
+    buildMessageHeader(message, {
+      timestamps: true,
+      timeZone: "UTC",
+      now: Date.parse("2026-08-01T12:00:00Z"),
+    }),
+    /^\[Discord message from helper \(bot\) at 2026-08-01 11:48:00 UTC \(12m ago\)\]$/,
+  );
+});
+
+test("keeps the header usable when Discord omits the creation timestamp", () => {
+  assert.equal(
+    buildMessageHeader(
+      { author: { username: "ghost" }, createdTimestamp: undefined },
+      { timestamps: true, timeZone: "UTC", now: Date.now() },
+    ),
+    "[Discord message from ghost]",
+  );
 });
 
 test("blocks exact Discord usernames case-insensitively", () => {

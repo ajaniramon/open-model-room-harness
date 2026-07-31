@@ -2,6 +2,7 @@ import { chmod, copyFile, readFile, rename, unlink, writeFile } from "node:fs/pr
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
+import { resolveTimeZone } from "../src/message-time.js";
 import {
   DEFAULT_LOCAL_BASE_URL,
   normalizeOpenAiCompatibleBaseUrl,
@@ -95,6 +96,7 @@ export function validateSetup(input) {
     ownerId: clean(input.ownerId, 100),
     ownerUsername: clean(input.ownerUsername, 100),
     botName: clean(input.botName, 80) || "JJ",
+    timeZone: resolveTimeZone(clean(input.timeZone, 100)),
     visualIdentity:
       clean(input.visualIdentity, 800) ||
       "A distinctive adult AI engineering team lead; customize this description.",
@@ -120,6 +122,8 @@ export function buildEnvText(config) {
     ELEVENLABS_VOICE_ID: config.voiceId,
     JJ_VISUAL_IDENTITY: config.visualIdentity,
     JJ_BLOCKED_USERNAMES: "",
+    JJ_CONTEXT_TIMESTAMPS: "true",
+    JJ_TIME_ZONE: config.timeZone,
     JJ_WEB_ALLOWED_USER_IDS: ownerIds,
     JJ_WEB_ALLOWED_USERNAMES: ownerNames,
     JJ_AUDIO_ALLOWED_USER_IDS: ownerIds,
