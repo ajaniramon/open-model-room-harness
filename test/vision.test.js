@@ -64,7 +64,7 @@ test("downloads Discord images and sends OpenAI-compatible vision parts", async 
     provider: "nanogpt",
     model: "qwen3.7-flash:thinking",
     baseUrl: "https://nano-gpt.com/api/v1/chat/completions",
-    reasoningEffort: "low",
+    reasoningEffort: "high",
     maxOutputTokens: 1_200,
   });
   const parts = calls[0].messages[1].content;

@@ -295,7 +295,7 @@ export async function compileImagePrompt(nanoGpt, promptContext, config) {
       provider: "nanogpt",
       model: config.imagePromptModel,
       baseUrl: config.imagePromptBaseUrl,
-      reasoningEffort: "low",
+      reasoningEffort: "high",
       maxOutputTokens: 512,
     });
     const imagePrompt = normalizeCompiledImagePrompt(rawPrompt);

@@ -293,7 +293,7 @@ test("compiles every image brief through the configured prompt model and retries
     provider: "nanogpt",
     model: "qwen3.7-flash:thinking",
     baseUrl: "https://nano-gpt.com/api/v1/chat/completions",
-    reasoningEffort: "low",
+    reasoningEffort: "high",
     maxOutputTokens: 512,
   });
   assert.match(calls[1].messages.at(-1).content, /Preserve the owner's creative brief/);

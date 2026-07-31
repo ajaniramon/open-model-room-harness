@@ -105,7 +105,11 @@ export class VisionAnalyzer {
           provider: "nanogpt",
           model: this.model,
           baseUrl: this.baseUrl,
-          reasoningEffort: "low",
+          // NanoGPT currently accepts only `none` or `high` for
+          // qwen3.7-flash:thinking. Keep the vision sidecar on its supported,
+          // higher-quality route instead of letting an invalid `low` value
+          // discard an otherwise valid Discord image.
+          reasoningEffort: "high",
           maxOutputTokens: this.maxOutputTokens,
         },
       );
