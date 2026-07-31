@@ -2,6 +2,10 @@ import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config as loadEnv } from "dotenv";
+import {
+  DEFAULT_LOCAL_BASE_URL,
+  openAiCompatibleChatUrl,
+} from "./openai-compatible.js";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 loadEnv({ path: resolve(projectRoot, ".env"), quiet: true });
@@ -29,8 +33,8 @@ if (!new Set(["mention", "all"]).has(triggerMode)) {
   throw new Error("JJ_TRIGGER_MODE must be either 'mention' or 'all'");
 }
 const chatProvider = process.env.MODEL_PROVIDER?.trim().toLowerCase() || "nanogpt";
-if (!new Set(["nanogpt", "openai", "anthropic", "xai", "gemini"]).has(chatProvider)) {
-  throw new Error("MODEL_PROVIDER must be one of: nanogpt, openai, anthropic, xai, gemini");
+if (!new Set(["nanogpt", "openai", "anthropic", "xai", "gemini", "local"]).has(chatProvider)) {
+  throw new Error("MODEL_PROVIDER must be one of: nanogpt, openai, anthropic, xai, gemini, local");
 }
 
 const spontaneousMinMessages = integer("JJ_SPONTANEOUS_MIN_MESSAGES", 8, { min: 2, max: 100 });
@@ -77,6 +81,13 @@ const modelProviders = Object.freeze({
       process.env.GEMINI_BASE_URL?.trim() ||
       "https://generativelanguage.googleapis.com/v1beta",
   }),
+  local: Object.freeze({
+    apiKey: process.env.LOCAL_API_KEY?.trim() || "",
+    model: process.env.LOCAL_MODEL?.trim() || "local-model",
+    baseUrl: openAiCompatibleChatUrl(
+      process.env.LOCAL_BASE_URL?.trim() || DEFAULT_LOCAL_BASE_URL,
+    ),
+  }),
 });
 const providerApiKeyEnv = Object.freeze({
   nanogpt: "NANOGPT_API_KEY",
@@ -84,6 +95,7 @@ const providerApiKeyEnv = Object.freeze({
   anthropic: "ANTHROPIC_API_KEY",
   xai: "XAI_API_KEY",
   gemini: "GEMINI_API_KEY",
+  local: null,
 });
 const defaultCodexExecutable =
   process.platform === "win32"

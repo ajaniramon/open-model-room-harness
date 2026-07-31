@@ -8,7 +8,7 @@
 [![CI](https://github.com/ajaniramon/open-model-room-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/ajaniramon/open-model-room-harness/actions/workflows/ci.yml)
 [![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A520.11-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![discord.js](https://img.shields.io/badge/discord.js-14-5865F2?logo=discord&logoColor=white)](https://discord.js.org/)
-[![Providers](https://img.shields.io/badge/Providers-5-7C3AED)](#model-providers)
+[![Providers](https://img.shields.io/badge/Providers-6-7C3AED)](#model-providers)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Text, vision, image generation, ElevenLabs audio replies, guarded web tools,
@@ -28,7 +28,7 @@ Explore the full multilingual project guide at
 
 | Capability | Implementation |
 | --- | --- |
-| Conversational model | Selectable NanoGPT, OpenAI, Anthropic, xAI, or Gemini provider |
+| Conversational model | Selectable NanoGPT, OpenAI, Anthropic, xAI, Gemini, or local OpenAI-compatible provider |
 | Vision | Qwen multimodal sidecar, summarized back to the main model |
 | Image generation | GPT Image 2 by default, with live NanoGPT model selection |
 | Prompt expansion | Every image brief is expanded and validated before generation |
@@ -47,7 +47,7 @@ The cross-platform installer is a real Electron desktop window with a restrained
 reversing-tool aesthetic. It does not start a web server, open a browser, expose a
 port, or contact a remote dashboard.
 
-It provides live progress, provider selection, API-key-aware model catalogs,
+It provides live progress, provider selection, cloud and local model catalogs,
 searchable model inputs with a manual fallback, masked secret fields, optional
 integrations, existing-config protection, and a full self-test. Secrets cross a
 context-isolated Electron bridge, are validated by the main process, and are
@@ -105,7 +105,8 @@ npm run setup
 The GUI asks for:
 
 - Discord bot token
-- Primary model provider, API key, and model
+- Primary model provider, model, and API key when required
+- Local OpenAI-compatible endpoint when using llama.cpp, vLLM, or an equivalent server
 - Optional NanoGPT API key for image, vision, and built-in escalation routes
 - Owner Discord user ID and/or username
 - Optional Tavily API key
@@ -128,11 +129,33 @@ with `MODEL_PROVIDER`.
 | [Anthropic](https://platform.claude.com/docs/en/get-started) | `claude-sonnet-5` | `ANTHROPIC_API_KEY` |
 | [xAI / Grok](https://docs.x.ai/developers/quickstart) | `grok-4.5` | `XAI_API_KEY` |
 | [Google Gemini](https://ai.google.dev/gemini-api/docs/quickstart) | `gemini-3.6-flash` | `GEMINI_API_KEY` |
+| Local OpenAI-compatible | `local-model` | Optional `LOCAL_API_KEY` |
 
 Each provider uses its native authentication and message/tool format. Tool calls
 are normalized inside the harness, including Anthropic tool-result blocks and
 Gemini function-call IDs and thought signatures. Custom model IDs and base URLs
 can be configured in `.env`.
+
+For a local model, set `MODEL_PROVIDER=local`, `LOCAL_MODEL` to the served model
+ID, and `LOCAL_BASE_URL` to the server address. The URL may be a bare host, an
+OpenAI-compatible `/v1` base, or the complete `/v1/chat/completions` URL; the
+harness normalizes all three forms. `LOCAL_API_KEY` is optional and is sent as a
+Bearer token only when present.
+
+Typical defaults:
+
+```dotenv
+# llama.cpp server (default port)
+LOCAL_BASE_URL=http://127.0.0.1:8080/v1
+
+# vLLM OpenAI-compatible server (default port)
+LOCAL_BASE_URL=http://127.0.0.1:8000/v1
+```
+
+The desktop installer queries `/v1/models` and fills the model selector when the
+server exposes a catalog. Manual model entry remains available for minimal or
+custom servers. Function tools require a local model/template and backend build
+that support OpenAI-compatible tool calling; ordinary chat does not.
 
 `JJ_REASONING_EFFORT` is forwarded where the provider's chat API supports it.
 For OpenAI GPT-5.6 tool-enabled Chat Completions, the harness automatically uses

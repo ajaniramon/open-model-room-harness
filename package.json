@@ -1,6 +1,6 @@
 {
   "name": "open-model-room-harness",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "private": false,
   "description": "A secure multi-provider, multimodal Discord AI room harness",
   "type": "module",
@@ -13,7 +13,7 @@
     "site:dev": "vite --config vite.site.config.js",
     "site:build": "vite build --config vite.site.config.js",
     "smoke:codex-delegation": "node scripts/smoke-codex-delegation.js",
-    "check": "node --check src/index.js && node --check src/discord-bot.js && node --check src/model-client.js && node --check src/nanogpt.js && node --check src/web-tools.js && node --check src/x-tools.js && node --check src/codex-runner.js && node --check src/audio-mode.js && node --check src/image-generation.js && node --check src/vision.js && node --check src/jj-identity.js && node --check scripts/setup.js && node --check scripts/setup-core.js && node --check scripts/model-catalog.js && node --check scripts/gui-installer.js && node --check scripts/installer-preload.cjs && node --check installer/app.js && node --check scripts/check-secrets.js",
+    "check": "node --check src/index.js && node --check src/discord-bot.js && node --check src/model-client.js && node --check src/openai-compatible.js && node --check src/nanogpt.js && node --check src/web-tools.js && node --check src/x-tools.js && node --check src/codex-runner.js && node --check src/audio-mode.js && node --check src/image-generation.js && node --check src/vision.js && node --check src/jj-identity.js && node --check scripts/setup.js && node --check scripts/setup-core.js && node --check scripts/model-catalog.js && node --check scripts/gui-installer.js && node --check scripts/installer-preload.cjs && node --check installer/app.js && node --check scripts/check-secrets.js",
     "scan:secrets": "node scripts/check-secrets.js",
     "test": "node --test"
   },

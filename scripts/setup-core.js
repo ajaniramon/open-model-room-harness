@@ -2,6 +2,10 @@ import { chmod, copyFile, readFile, rename, unlink, writeFile } from "node:fs/pr
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
+import {
+  DEFAULT_LOCAL_BASE_URL,
+  normalizeOpenAiCompatibleBaseUrl,
+} from "../src/openai-compatible.js";
 
 export const root = resolve(import.meta.dirname, "..");
 export const envPath = resolve(root, ".env");
@@ -39,6 +43,15 @@ export const providerDefinitions = Object.freeze({
     modelEnv: "GEMINI_MODEL",
     defaultModel: "gemini-3.6-flash",
   },
+  local: {
+    label: "Local / OpenAI",
+    keyEnv: "LOCAL_API_KEY",
+    modelEnv: "LOCAL_MODEL",
+    baseUrlEnv: "LOCAL_BASE_URL",
+    defaultModel: "local-model",
+    defaultBaseUrl: DEFAULT_LOCAL_BASE_URL,
+    apiKeyOptional: true,
+  },
 });
 
 function clean(value, maximum = 20_000) {
@@ -53,7 +66,9 @@ export function validateSetup(input) {
   const definition = providerDefinitions[provider];
   if (!definition) throw new Error("Choose a supported model provider.");
   if (!clean(input.discordToken)) throw new Error("Discord bot token is required.");
-  if (!clean(input.primaryApiKey)) throw new Error(`${definition.label} API key is required.`);
+  if (!definition.apiKeyOptional && !clean(input.primaryApiKey)) {
+    throw new Error(`${definition.label} API key is required.`);
+  }
   if (!clean(input.model, 300)) throw new Error("A conversation model ID is required.");
   if (!clean(input.ownerId, 100) && !clean(input.ownerUsername, 100)) {
     throw new Error("Add an owner Discord user ID or username.");
@@ -61,11 +76,18 @@ export function validateSetup(input) {
   if (input.ownerId && !/^\d{15,22}$/.test(clean(input.ownerId, 100))) {
     throw new Error("Discord user IDs contain 15–22 digits. Use the username field as a fallback.");
   }
+  let baseUrl = "";
+  if (definition.baseUrlEnv) {
+    baseUrl = normalizeOpenAiCompatibleBaseUrl(
+      clean(input.baseUrl, 2_000) || definition.defaultBaseUrl,
+    );
+  }
   return {
     provider,
     discordToken: clean(input.discordToken),
     primaryApiKey: clean(input.primaryApiKey),
     model: clean(input.model, 300),
+    baseUrl,
     nanoGptApiKey: provider === "nanogpt" ? clean(input.primaryApiKey) : clean(input.nanoGptApiKey),
     tavilyApiKey: clean(input.tavilyApiKey),
     elevenLabsApiKey: clean(input.elevenLabsApiKey),
@@ -92,6 +114,7 @@ export function buildEnvText(config) {
     NANOGPT_API_KEY: config.nanoGptApiKey,
     [definition.keyEnv]: config.primaryApiKey,
     [definition.modelEnv]: config.model,
+    ...(definition.baseUrlEnv ? { [definition.baseUrlEnv]: config.baseUrl } : {}),
     TAVILY_API_KEY: config.tavilyApiKey,
     ELEVENLABS_API_KEY: config.elevenLabsApiKey,
     ELEVENLABS_VOICE_ID: config.voiceId,

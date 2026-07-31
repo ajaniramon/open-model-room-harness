@@ -2,8 +2,8 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("installer", {
   getStatus: () => ipcRenderer.invoke("installer:status"),
-  listModels: (provider, apiKey) =>
-    ipcRenderer.invoke("installer:list-models", { provider, apiKey }),
+  listModels: (provider, apiKey, baseUrl) =>
+    ipcRenderer.invoke("installer:list-models", { provider, apiKey, baseUrl }),
   install: (configuration) => ipcRenderer.invoke("installer:install", configuration),
   onProgress: (listener) => {
     const handler = (_event, payload) => listener(payload);

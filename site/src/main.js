@@ -76,7 +76,7 @@ function render(locale) {
           </div>
         </div>
         <div class="hero-art" aria-label="${escapeHtml(t.hero.artAlt)}">
-          <div class="orbit orbit-one"><span>OpenAI</span><span>Gemini</span></div>
+          <div class="orbit orbit-one"><span>OpenAI</span><span>Gemini</span><span>Local</span></div>
           <div class="orbit orbit-two"><span>Claude</span><span>Grok</span><span>NanoGPT</span></div>
           <div class="logo-card">
             <img src="./open-model-room-mark.png" alt="${escapeHtml(t.logoAlt)}" />

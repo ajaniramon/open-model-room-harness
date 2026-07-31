@@ -12,10 +12,11 @@ import { TavilyClient, WebToolRuntime } from "./web-tools.js";
 import { FxTwitterClient, KeylessXDiscovery } from "./x-tools.js";
 
 const promptUrl = new URL("./system-prompt.txt", import.meta.url);
-for (const [name, value] of [
-  ["DISCORD_TOKEN", config.discordToken],
-  [config.chatApiKeyEnv, config.chatApiKey],
-]) {
+const requiredConfiguration = [["DISCORD_TOKEN", config.discordToken]];
+if (config.chatApiKeyEnv) {
+  requiredConfiguration.push([config.chatApiKeyEnv, config.chatApiKey]);
+}
+for (const [name, value] of requiredConfiguration) {
   if (!value) {
     throw new Error(
       `Missing required environment variable: ${name}. Run npm run setup first.`,

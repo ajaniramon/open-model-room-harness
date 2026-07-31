@@ -489,7 +489,7 @@ export function createDiscordBot({
 
   client.once(Events.ClientReady, (readyClient) => {
     logger.info(
-      `JJ connected as ${readyClient.user.tag}; model=${config.nanoGptModel}; spontaneous=${config.spontaneousEnabled}`,
+      `JJ connected as ${readyClient.user.tag}; provider=${config.chatProvider}; model=${config.chatModel}; spontaneous=${config.spontaneousEnabled}`,
     );
   });
 

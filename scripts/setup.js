@@ -2,6 +2,10 @@ import { copyFile, chmod, readFile, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
+import {
+  DEFAULT_LOCAL_BASE_URL,
+  normalizeOpenAiCompatibleBaseUrl,
+} from "../src/openai-compatible.js";
 
 const root = resolve(import.meta.dirname, "..");
 const envPath = resolve(root, ".env");
@@ -159,6 +163,16 @@ const providerDefinitions = {
     modelEnv: "GEMINI_MODEL",
     defaultModel: "gemini-3.6-flash",
   },
+  local: {
+    label: "Local / OpenAI",
+    keyEnv: "LOCAL_API_KEY",
+    keyPrompt: "Local API key (optional; press Enter for none)",
+    modelEnv: "LOCAL_MODEL",
+    baseUrlEnv: "LOCAL_BASE_URL",
+    defaultModel: "local-model",
+    defaultBaseUrl: DEFAULT_LOCAL_BASE_URL,
+    apiKeyOptional: true,
+  },
 };
 const modelProvider = await choose(
   "Select the primary conversation provider:",
@@ -169,7 +183,15 @@ const modelProvider = await choose(
   "nanogpt",
 );
 const providerDefinition = providerDefinitions[modelProvider];
-const primaryApiKey = await askSecret(providerDefinition.keyPrompt, true);
+const primaryApiKey = await askSecret(
+  providerDefinition.keyPrompt,
+  !providerDefinition.apiKeyOptional,
+);
+const primaryBaseUrl = providerDefinition.baseUrlEnv
+  ? normalizeOpenAiCompatibleBaseUrl(
+      await ask("Local OpenAI-compatible API base URL", providerDefinition.defaultBaseUrl),
+    )
+  : "";
 const primaryModel = await ask(
   `${providerDefinition.label} conversation model`,
   providerDefinition.defaultModel,
@@ -212,6 +234,9 @@ const values = {
   NANOGPT_API_KEY: nanoGptApiKey,
   [providerDefinition.keyEnv]: primaryApiKey,
   [providerDefinition.modelEnv]: primaryModel,
+  ...(providerDefinition.baseUrlEnv
+    ? { [providerDefinition.baseUrlEnv]: primaryBaseUrl }
+    : {}),
   TAVILY_API_KEY: tavilyApiKey,
   ELEVENLABS_API_KEY: elevenLabsApiKey,
   ELEVENLABS_VOICE_ID: voiceId,

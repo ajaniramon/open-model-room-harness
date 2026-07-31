@@ -1,5 +1,12 @@
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
-const SUPPORTED_PROVIDERS = new Set(["nanogpt", "openai", "anthropic", "xai", "gemini"]);
+const SUPPORTED_PROVIDERS = new Set([
+  "nanogpt",
+  "openai",
+  "anthropic",
+  "xai",
+  "gemini",
+  "local",
+]);
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -10,6 +17,7 @@ function providerLabel(provider) {
     anthropic: "Anthropic",
     xai: "xAI",
     gemini: "Gemini",
+    local: "Local OpenAI-compatible server",
   }[provider] || provider;
 }
 
@@ -178,7 +186,7 @@ export class ModelClient {
       reasoningEffort: options.reasoningEffort ?? this.config.reasoningEffort,
       maxOutputTokens: options.maxOutputTokens ?? this.config.maxOutputTokens,
     };
-    if (!route.apiKey) {
+    if (!route.apiKey && provider !== "local") {
       throw new Error(`${providerLabel(provider)} API key is not configured`);
     }
     if (!route.model) {
@@ -369,6 +377,11 @@ export class ModelClient {
           ? "none"
           : route.reasoningEffort;
       }
+    } else if (route.provider === "local") {
+      // llama.cpp and vLLM both accept the core OpenAI Chat Completions
+      // contract. Avoid vendor-only reasoning fields that strict local
+      // servers may reject.
+      body.max_tokens = route.maxOutputTokens;
     } else {
       body.max_tokens = route.maxOutputTokens;
       body.reasoning_effort = route.reasoningEffort;
@@ -378,12 +391,11 @@ export class ModelClient {
       body.tools = activeToolRuntime.tools;
       body.tool_choice = "auto";
     }
+    const headers = { "Content-Type": "application/json" };
+    if (route.apiKey) headers.Authorization = `Bearer ${route.apiKey}`;
     return this.fetch(route.baseUrl, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${route.apiKey}`,
-        "Content-Type": "application/json",
-      },
+      headers,
       body: JSON.stringify(body),
       signal,
     });

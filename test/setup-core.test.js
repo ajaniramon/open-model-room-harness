@@ -48,3 +48,20 @@ test("reuses the primary key as the NanoGPT sidecar when NanoGPT is primary", ()
   const config = validateSetup(valid({ provider: "nanogpt" }));
   assert.equal(config.nanoGptApiKey, config.primaryApiKey);
 });
+
+test("accepts a keyless local server and writes its normalized OpenAI-compatible route", () => {
+  const config = validateSetup(
+    valid({
+      provider: "local",
+      primaryApiKey: "",
+      model: "my-local-model",
+      baseUrl: "http://127.0.0.1:8000/v1/chat/completions",
+    }),
+  );
+  const env = buildEnvText(config);
+  assert.equal(config.baseUrl, "http://127.0.0.1:8000/v1");
+  assert.match(env, /MODEL_PROVIDER="local"/);
+  assert.match(env, /LOCAL_API_KEY=""/);
+  assert.match(env, /LOCAL_MODEL="my-local-model"/);
+  assert.match(env, /LOCAL_BASE_URL="http:\/\/127\.0\.0\.1:8000\/v1"/);
+});

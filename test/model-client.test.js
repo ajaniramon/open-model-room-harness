@@ -31,6 +31,11 @@ function testConfig(provider) {
         model: "gemini-3.6-flash",
         baseUrl: "https://generativelanguage.test/v1beta",
       },
+      local: {
+        apiKey: "",
+        model: "local-test-model",
+        baseUrl: "http://127.0.0.1:8080/v1/chat/completions",
+      },
     },
     maxOutputTokens: 256,
     reasoningEffort: "high",
@@ -73,6 +78,26 @@ test("routes xAI through its OpenAI-compatible Chat Completions endpoint", async
   assert.equal(request.url, "https://api.x.test/v1/chat/completions");
   assert.equal(request.headers.Authorization, "Bearer xai-key");
   assert.equal(request.body.reasoning_effort, "high");
+});
+
+test("routes keyless local llama.cpp and vLLM servers through the minimal OpenAI contract", async () => {
+  let request;
+  const fetchMock = async (url, options) => {
+    request = { url, headers: options.headers, body: JSON.parse(options.body) };
+    return Response.json({
+      choices: [{ message: { role: "assistant", content: "Local answer" } }],
+    });
+  };
+  const result = await new ModelClient(testConfig("local"), fetchMock).complete([
+    { role: "system", content: "System" },
+    { role: "user", content: "Hello" },
+  ]);
+  assert.equal(result, "Local answer");
+  assert.equal(request.url, "http://127.0.0.1:8080/v1/chat/completions");
+  assert.equal(request.headers.Authorization, undefined);
+  assert.equal(request.body.model, "local-test-model");
+  assert.equal(request.body.max_tokens, 256);
+  assert.equal("reasoning_effort" in request.body, false);
 });
 
 test("uses OpenAI's tool-compatible reasoning setting when tools are enabled", async () => {

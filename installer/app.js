@@ -25,12 +25,20 @@ function addLog(stage, message, state = "RUN") {
 function chooseProvider(provider) {
   const definition = definitions[provider];
   if (!definition) return;
+  const local = provider === "local";
   model.value = definition.defaultModel;
   document.querySelector("#model-options").replaceChildren();
-  setModelStatus("PASTE KEY TO LOAD CATALOG");
+  setModelStatus(local ? "START SERVER TO LOAD CATALOG" : "PASTE KEY TO LOAD CATALOG");
   document.querySelector("#provider-name").textContent = definition.label.toUpperCase();
   document.querySelector("#nanogpt-sidecar").classList.toggle("hidden", provider === "nanogpt");
-  if (document.querySelector("#primary-api-key").value.trim()) scheduleModelLoad(0);
+  document.querySelector("#local-endpoint-row").classList.toggle("hidden", !local);
+  const keyInput = document.querySelector("#primary-api-key");
+  keyInput.required = !definition.apiKeyOptional;
+  keyInput.placeholder = local ? "OPTIONAL — ONLY IF YOUR SERVER REQUIRES IT" : "";
+  document.querySelector("#api-key-label").firstChild.textContent = local
+    ? "API.KEY, OPTiONAL AUTH FOR "
+    : "API.KEY, FiND THE GOOD KEY FOR ";
+  if (local || keyInput.value.trim()) scheduleModelLoad(0);
 }
 
 function setModelStatus(message, state = "") {
@@ -42,7 +50,9 @@ function setModelStatus(message, state = "") {
 async function loadModels() {
   const provider = new FormData(form).get("provider");
   const apiKey = document.querySelector("#primary-api-key").value.trim();
-  if (!apiKey) {
+  const local = provider === "local";
+  const baseUrl = document.querySelector("#local-base-url").value.trim();
+  if (!apiKey && !local) {
     setModelStatus("PASTE KEY TO LOAD CATALOG");
     return;
   }
@@ -51,7 +61,7 @@ async function loadModels() {
   refresh.disabled = true;
   setModelStatus("SCANNiNG...");
   try {
-    const models = await window.installer.listModels(provider, apiKey);
+    const models = await window.installer.listModels(provider, apiKey, baseUrl);
     if (sequence !== modelRequestSequence) return;
     const options = document.querySelector("#model-options");
     options.replaceChildren(
@@ -81,7 +91,7 @@ function scheduleModelLoad(delay = 550) {
 function updateMeter() {
   const data = new FormData(form);
   let score = 10;
-  for (const key of ["discordToken", "primaryApiKey", "ownerId", "ownerUsername", "tavilyApiKey", "elevenLabsApiKey"]) {
+  for (const key of ["discordToken", "primaryApiKey", "baseUrl", "ownerId", "ownerUsername", "tavilyApiKey", "elevenLabsApiKey"]) {
     if (String(data.get(key) || "").trim()) score += key.includes("owner") ? 10 : 15;
   }
   const value = Math.min(score, 100);
@@ -131,6 +141,9 @@ async function boot() {
 
 form.addEventListener("input", updateMeter);
 document.querySelector("#primary-api-key").addEventListener("input", () => scheduleModelLoad());
+document.querySelector("#local-base-url").addEventListener("input", () => {
+  if (new FormData(form).get("provider") === "local") scheduleModelLoad();
+});
 document.querySelector("#refresh-models").addEventListener("click", () => scheduleModelLoad(0));
 form.addEventListener("submit", async (event) => {
   event.preventDefault();

@@ -71,7 +71,7 @@ ipcMain.handle("installer:install", async (_event, input) => {
 
 ipcMain.handle("installer:list-models", async (_event, input) => {
   if (!input || typeof input !== "object") throw new Error("Invalid model catalog request.");
-  return listProviderModels(input.provider, input.apiKey);
+  return listProviderModels(input.provider, input.apiKey, { baseUrl: input.baseUrl });
 });
 
 ipcMain.on("window:minimize", () => mainWindow?.minimize());

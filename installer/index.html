@@ -14,7 +14,7 @@
         <div class="title">
           <span class="signal"></span>
           <strong>OPEN MODEL ROOM</strong>
-          <i>// INSTALL CONSOLE 1.3</i>
+          <i>// INSTALL CONSOLE 1.4</i>
         </div>
         <div class="window-actions">
           <button id="minimize" type="button" aria-label="Minimize">—</button>
@@ -24,7 +24,7 @@
 
       <div class="release-line">
         <span>PRIVATE CONFIGURATION UTILITY</span>
-        <span>FIVE PROVIDERS // ONE DISCORD ROOM</span>
+        <span>SIX PROVIDERS // ONE DISCORD ROOM</span>
         <span>LOCAL EXECUTION ONLY</span>
       </div>
 
@@ -72,13 +72,25 @@
                   </div>
                 </label>
                 <label class="field">
-                  <span>API.KEY, FiND THE GOOD KEY FOR <b id="provider-name">NANOGPT</b></span>
+                  <span id="api-key-label">API.KEY, FiND THE GOOD KEY FOR <b id="provider-name">NANOGPT</b></span>
                   <div class="secret-wrap">
                     <input id="primary-api-key" name="primaryApiKey" type="password" required maxlength="20000" />
                     <button class="peek" type="button" data-peek="primary-api-key">ViEW</button>
                   </div>
                 </label>
               </div>
+              <label class="field hidden" id="local-endpoint-row">
+                <span>LOCAL.API, POiNT AT THE OPENAI-COMPATiBLE SiGNAL</span>
+                <input
+                  id="local-base-url"
+                  name="baseUrl"
+                  type="url"
+                  maxlength="2000"
+                  spellcheck="false"
+                  value="http://127.0.0.1:8080/v1"
+                  placeholder="http://127.0.0.1:8080/v1"
+                />
+              </label>
               <label class="field sidecar hidden" id="nanogpt-sidecar">
                 <span>NAN0GPT.KEY, ARM ViSiON + iMAGES</span>
                 <div class="secret-wrap">

@@ -8,6 +8,11 @@ test("configures all supported primary conversation providers", () => {
   assert.equal(config.modelProviders.anthropic.model, "claude-sonnet-5");
   assert.equal(config.modelProviders.xai.model, "grok-4.5");
   assert.equal(config.modelProviders.gemini.model, "gemini-3.6-flash");
+  assert.equal(config.modelProviders.local.model, "local-model");
+  assert.equal(
+    config.modelProviders.local.baseUrl,
+    "http://127.0.0.1:8080/v1/chat/completions",
+  );
 });
 
 test("routes Kimi K3 escalation aliases through NanoGPT paid API", () => {

@@ -1,3 +1,5 @@
+import { openAiCompatibleModelsUrl } from "../src/openai-compatible.js";
+
 const TIMEOUT_MS = 15_000;
 const MAX_RESPONSE_CHARS = 2_000_000;
 const MAX_MODELS = 2_000;
@@ -21,7 +23,7 @@ function normalizeModels(models) {
     .slice(0, MAX_MODELS);
 }
 
-function requestFor(provider, apiKey) {
+function requestFor(provider, apiKey, baseUrl) {
   switch (provider) {
     case "nanogpt":
       return {
@@ -57,6 +59,12 @@ function requestFor(provider, apiKey) {
             .filter((model) => model.supportedGenerationMethods?.includes("generateContent"))
             .map((model) => model.baseModelId || model.name?.replace(/^models\//, "")),
       };
+    case "local":
+      return {
+        url: openAiCompatibleModelsUrl(baseUrl),
+        headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+        parse: (body) => (body.data || []).map((model) => model.id),
+      };
     default:
       throw new Error("Choose a supported provider before loading models.");
   }
@@ -65,8 +73,10 @@ function requestFor(provider, apiKey) {
 export async function listProviderModels(providerValue, apiKeyValue, options = {}) {
   const provider = clean(providerValue, 30).toLowerCase();
   const apiKey = clean(apiKeyValue);
-  if (!apiKey) throw new Error("Paste the provider API key before loading models.");
-  const request = requestFor(provider, apiKey);
+  if (!apiKey && provider !== "local") {
+    throw new Error("Paste the provider API key before loading models.");
+  }
+  const request = requestFor(provider, apiKey, options.baseUrl);
   const fetchImpl = options.fetchImpl || fetch;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs || TIMEOUT_MS);

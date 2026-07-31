@@ -72,6 +72,18 @@ test("keeps only Gemini generateContent models and strips resource prefixes", as
   assert.deepEqual(models, ["gemini-chat-test"]);
 });
 
+test("loads a keyless local OpenAI-compatible catalog from llama.cpp or vLLM", async () => {
+  const models = await listProviderModels("local", "", {
+    baseUrl: "http://127.0.0.1:8080/v1/chat/completions",
+    fetchImpl: async (url, options) => {
+      assert.equal(url, "http://127.0.0.1:8080/v1/models");
+      assert.equal(options.headers.Authorization, undefined);
+      return response({ data: [{ id: "qwen-local" }, { id: "llama-local" }] });
+    },
+  });
+  assert.deepEqual(models, ["llama-local", "qwen-local"]);
+});
+
 test("returns useful catalog errors without echoing credentials", async () => {
   await assert.rejects(
     () =>
