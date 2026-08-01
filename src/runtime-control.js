@@ -28,8 +28,17 @@ export function isRuntimeControlAuthorized(author, config, action) {
   return config.ownerUsernames.has(String(author?.username || "").toLowerCase());
 }
 
-export function allowsMessageDuringMaintenance(runtimeControl, ownerAuthorized) {
-  return !runtimeControl?.maintenanceEnabled || ownerAuthorized === true;
+// Maintenance keeps the bot owner-only. The owner keeps direct replies, but organic
+// participation is discarded even for the owner: it speaks to the whole channel, so
+// it is not an owner-only reply.
+export function allowsMessageDuringMaintenance(
+  runtimeControl,
+  ownerAuthorized,
+  { spontaneous = false } = {},
+) {
+  if (!runtimeControl?.maintenanceEnabled) return true;
+  if (spontaneous) return false;
+  return ownerAuthorized === true;
 }
 
 function formatUptime(milliseconds) {

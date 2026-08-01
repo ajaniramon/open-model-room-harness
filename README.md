@@ -269,8 +269,11 @@ environment variables documented in `.env.example` remain deployment fallbacks.
 `maintenance on`, `wake`, and `status` are deterministic owner commands handled
 before inference. Maintenance persists across restarts and turns the companion into
 an owner-only bot: the owner retains normal replies and authorized tools, while every
-other human, bot, webhook, spontaneous event, and model call is discarded before
-inference.
+other human, bot, webhook, and model call is discarded before inference. Spontaneous
+participation stops in every channel, including for the owner, because it speaks to
+the whole room rather than answering the owner. The flag is global, not per channel,
+and it is re-checked when a queued turn starts and again before the bot speaks, so
+turns admitted in another channel before the toggle never land afterwards.
 
 `restart runtime` is disabled by default. The desktop installer can enable it when
 a numeric owner ID is present, but only do so behind WinSW, systemd, Docker, or

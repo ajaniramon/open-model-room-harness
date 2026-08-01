@@ -558,6 +558,9 @@ export function createDiscordBot({
     const directResponse = trigger.directResponse;
     const spontaneous =
       !directResponse &&
+      allowsMessageDuringMaintenance(runtimeControl, runtimeOwnerAuthorized, {
+        spontaneous: true,
+      }) &&
       isSpontaneousCandidate(message, client, config) &&
       spontaneousGate.consider(message.channelId);
     if (!directResponse && !spontaneous) return;
@@ -661,6 +664,18 @@ export function createDiscordBot({
       .catch(() => undefined)
       .then(async () => {
         let participationCommitted = false;
+        // Channel queues serialize turns and inference takes seconds, so maintenance
+        // can be enabled from another channel after this turn was admitted. Re-check
+        // before spending inference and again before speaking.
+        const maintenanceSilenced = () =>
+          !allowsMessageDuringMaintenance(runtimeControl, runtimeOwnerAuthorized, { spontaneous });
+        if (maintenanceSilenced()) {
+          participationController?.cancel(participationReservationId);
+          logger.info(
+            `Maintenance discarded a queued turn channel=${message.channelId} user=${message.author.username}`,
+          );
+          return;
+        }
         const audioResponseEnabled = shouldUseAudioResponse(
           message.author,
           directResponse,
@@ -744,6 +759,7 @@ export function createDiscordBot({
                 prompt: imagePrompt,
                 requestedModel: imageRequest.requestedModel,
               });
+              if (maintenanceSilenced()) return;
               await sendImageResponse(message, generation);
               logger.info(
                 `Image generation complete model=${generation.model} promptChars=${generation.prompt.length} images=${generation.images.length}`,
@@ -861,6 +877,12 @@ export function createDiscordBot({
             );
             response = await nanoGpt.complete(context, { enabledToolNames });
           }
+          if (maintenanceSilenced()) {
+            logger.info(
+              `Maintenance discarded a finished turn channel=${message.channelId} user=${message.author.username}`,
+            );
+            return;
+          }
           await sendResponse(message, response.slice(0, DISCORD_MESSAGE_LIMIT * 10), {
             reply: !spontaneous,
             audioEnabled: !forceTextResponse && audioResponseEnabled,
@@ -873,6 +895,7 @@ export function createDiscordBot({
         } catch (error) {
           if (!participationCommitted) participationController?.cancel(participationReservationId);
           logger.error("Failed to answer Discord message", error);
+          if (maintenanceSilenced()) return;
           await sendResponse(
             message,
             "[sighs] Something failed while contacting the model. Please try again in a moment. The error has been logged.",

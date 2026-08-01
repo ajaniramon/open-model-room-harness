@@ -27,6 +27,16 @@ test("maintenance suppresses every non-owner message before inference", () => {
   assert.equal(allowsMessageDuringMaintenance({ maintenanceEnabled: false }, false), true);
 });
 
+test("maintenance suppresses spontaneous participation even for the owner", () => {
+  const control = { maintenanceEnabled: true };
+  assert.equal(allowsMessageDuringMaintenance(control, true, { spontaneous: true }), false);
+  assert.equal(allowsMessageDuringMaintenance(control, false, { spontaneous: true }), false);
+  assert.equal(
+    allowsMessageDuringMaintenance({ maintenanceEnabled: false }, false, { spontaneous: true }),
+    true,
+  );
+});
+
 test("persists maintenance state and audits controls without model inference", async () => {
   const root = await mkdtemp(join(tmpdir(), "runtime-control-"));
   const path = join(root, "state", "runtime-control.json");
