@@ -20,12 +20,11 @@ test("requires a numeric owner ID for restart while allowing configured fallback
   assert.equal(isRuntimeControlAuthorized({ id: "999", username: "OWNER" }, config, "maintenance_on"), true);
 });
 
-test("maintenance suppresses every message except an authorized control", () => {
+test("maintenance suppresses every non-owner message before inference", () => {
   const control = { maintenanceEnabled: true };
-  assert.equal(allowsMessageDuringMaintenance(control, null, false), false);
-  assert.equal(allowsMessageDuringMaintenance(control, { action: "wake" }, false), false);
-  assert.equal(allowsMessageDuringMaintenance(control, { action: "maintenance_off" }, true), true);
-  assert.equal(allowsMessageDuringMaintenance({ maintenanceEnabled: false }, null, false), true);
+  assert.equal(allowsMessageDuringMaintenance(control, false), false);
+  assert.equal(allowsMessageDuringMaintenance(control, true), true);
+  assert.equal(allowsMessageDuringMaintenance({ maintenanceEnabled: false }, false), true);
 });
 
 test("persists maintenance state and audits controls without model inference", async () => {
@@ -40,7 +39,7 @@ test("persists maintenance state and audits controls without model inference", a
       now: () => Date.parse("2026-08-01T12:00:00.000Z"),
       startedAt: Date.parse("2026-08-01T10:30:00.000Z"),
     }).load();
-    assert.match((await control.execute({ action: "maintenance_on" }, { userId: "123" })).response, /paused/);
+    assert.match((await control.execute({ action: "maintenance_on" }, { userId: "123" })).response, /owner-only/);
     assert.equal(JSON.parse(await readFile(path, "utf8")).maintenanceEnabled, true);
     assert.match((await control.execute({ action: "status" }, { model: "test-model" })).response, /1h 30m/);
     await control.execute({ action: "maintenance_off" });

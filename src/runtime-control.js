@@ -28,8 +28,8 @@ export function isRuntimeControlAuthorized(author, config, action) {
   return config.ownerUsernames.has(String(author?.username || "").toLowerCase());
 }
 
-export function allowsMessageDuringMaintenance(runtimeControl, command, authorized) {
-  return !runtimeControl?.maintenanceEnabled || Boolean(command && authorized);
+export function allowsMessageDuringMaintenance(runtimeControl, ownerAuthorized) {
+  return !runtimeControl?.maintenanceEnabled || ownerAuthorized === true;
 }
 
 function formatUptime(milliseconds) {
@@ -74,7 +74,7 @@ export class RuntimeControl {
     if (command.action === "maintenance_on") {
       if (!this.maintenanceEnabled) await this.setMaintenance(true, context);
       else await this.#audit("runtime_control_noop", context, { action: command.action });
-      return { response: "[maintenance mode enabled] The companion is connected, but model calls and normal replies are paused." };
+      return { response: "[maintenance mode enabled] The companion is now owner-only. Everyone else is ignored before inference." };
     }
     if (command.action === "maintenance_off") {
       if (this.maintenanceEnabled) await this.setMaintenance(false, context);

@@ -547,10 +547,13 @@ export function createDiscordBot({
 
   client.on(Events.MessageCreate, async (message) => {
     const runtimeCommand = runtimeControl ? parseRuntimeControlCommand(message.content) : null;
+    const runtimeOwnerAuthorized = runtimeControl
+      ? isRuntimeControlAuthorized(message.author, config, "status")
+      : false;
     const runtimeAuthorized = runtimeCommand
       ? isRuntimeControlAuthorized(message.author, config, runtimeCommand.action)
       : false;
-    if (!allowsMessageDuringMaintenance(runtimeControl, runtimeCommand, runtimeAuthorized)) return;
+    if (!allowsMessageDuringMaintenance(runtimeControl, runtimeOwnerAuthorized)) return;
     const trigger = await resolveResponseTrigger(message, client, config, participationController);
     const directResponse = trigger.directResponse;
     const spontaneous =

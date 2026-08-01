@@ -267,9 +267,10 @@ environment variables documented in `.env.example` remain deployment fallbacks.
 ## Remote runtime control
 
 `maintenance on`, `wake`, and `status` are deterministic owner commands handled
-before inference. Maintenance persists across restarts and keeps Discord connected
-only to receive a later owner control command; all normal replies, tools, spontaneous
-participation, and model calls remain paused.
+before inference. Maintenance persists across restarts and turns the companion into
+an owner-only bot: the owner retains normal replies and authorized tools, while every
+other human, bot, webhook, spontaneous event, and model call is discarded before
+inference.
 
 `restart runtime` is disabled by default. The desktop installer can enable it when
 a numeric owner ID is present, but only do so behind WinSW, systemd, Docker, or
