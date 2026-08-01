@@ -10,6 +10,11 @@ import { prepareSpeechText } from "./audio-mode.js";
 import { JJ_VISUAL_IDENTITY } from "./jj-identity.js";
 import { formatMessageTimestamp, formatTimestampInstruction } from "./message-time.js";
 import { parseParticipationCommand } from "./participation-policy.js";
+import {
+  allowsMessageDuringMaintenance,
+  isRuntimeControlAuthorized,
+  parseRuntimeControlCommand,
+} from "./runtime-control.js";
 import { SpontaneousGate } from "./spontaneous.js";
 
 const DISCORD_MESSAGE_LIMIT = 2_000;
@@ -514,6 +519,8 @@ export function createDiscordBot({
   imageClient = null,
   visionAnalyzer = null,
   participationController = null,
+  runtimeControl = null,
+  requestRuntimeRestart = null,
   systemPrompt,
   logger = console,
 }) {
@@ -533,9 +540,17 @@ export function createDiscordBot({
     logger.info(
       `JJ connected as ${readyClient.user.tag}; provider=${config.chatProvider}; model=${config.chatModel}; spontaneous=${config.spontaneousEnabled}`,
     );
+    runtimeControl?.applyPresence(readyClient).catch((error) =>
+      logger.error("Failed to apply runtime presence", error),
+    );
   });
 
   client.on(Events.MessageCreate, async (message) => {
+    const runtimeCommand = runtimeControl ? parseRuntimeControlCommand(message.content) : null;
+    const runtimeAuthorized = runtimeCommand
+      ? isRuntimeControlAuthorized(message.author, config, runtimeCommand.action)
+      : false;
+    if (!allowsMessageDuringMaintenance(runtimeControl, runtimeCommand, runtimeAuthorized)) return;
     const trigger = await resolveResponseTrigger(message, client, config, participationController);
     const directResponse = trigger.directResponse;
     const spontaneous =
@@ -543,6 +558,34 @@ export function createDiscordBot({
       isSpontaneousCandidate(message, client, config) &&
       spontaneousGate.consider(message.channelId);
     if (!directResponse && !spontaneous) return;
+    if (runtimeCommand && directResponse) {
+      if (!runtimeAuthorized) {
+        await sendResponse(
+          message,
+          runtimeCommand.action === "restart"
+            ? "Runtime restart requires the configured numeric owner ID."
+            : "Runtime controls are owner-only.",
+        );
+        return;
+      }
+      try {
+        const result = await runtimeControl.execute(runtimeCommand, {
+          userId: message.author.id,
+          username: message.author.username,
+          guildId: message.guildId,
+          channelId: message.channelId,
+          model: config.chatModel,
+        });
+        await runtimeControl.applyPresence(client);
+        await sendResponse(message, result.response);
+        logger.info(`Runtime control action=${runtimeCommand.action} user=${message.author.username}`);
+        if (result.restart) requestRuntimeRestart?.();
+      } catch (error) {
+        logger.error("Runtime control command failed", error);
+        await sendResponse(message, "[runtime control failed] The error has been logged.").catch(() => undefined);
+      }
+      return;
+    }
     const ownerAuthorized = participationController?.isOwner(message.author, config) || false;
     const participationCommand = directResponse ? parseParticipationCommand(message.content) : null;
     const admission = participationController

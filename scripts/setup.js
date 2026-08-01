@@ -250,6 +250,9 @@ const cooldownMaxSeconds = await askInteger(
   86_400,
 );
 const autobanEnabled = await confirm("Enable temporary internal autoban for clear spam", true);
+const runtimeRestartEnabled = ownerId
+  ? await confirm("Enable owner-only runtime restart (requires WinSW, systemd, or another supervisor)", false)
+  : false;
 const voiceId = elevenLabsApiKey
   ? await ask("ElevenLabs voice ID", "21m00Tcm4TlvDq8ikWAM")
   : "21m00Tcm4TlvDq8ikWAM";
@@ -332,10 +335,24 @@ await writeFile(
       },
       statePath: "state/participation-state.json",
     },
+    runtimeControl: {
+      enabled: true,
+      statePath: "state/runtime-control.json",
+      restartEnabled: runtimeRestartEnabled,
+      restartDelayMs: 750,
+      restartExitCode: 75,
+      allowUsernameFallback: true,
+    },
     logging: {
       participation: {
         enabled: true,
         path: "logs/participation-events.jsonl",
+        maxBytes: 5_242_880,
+        maxArchives: 5,
+      },
+      runtimeControl: {
+        enabled: true,
+        path: "logs/runtime-control.jsonl",
         maxBytes: 5_242_880,
         maxArchives: 5,
       },

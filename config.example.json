@@ -34,10 +34,24 @@
     },
     "statePath": "state/participation-state.json"
   },
+  "runtimeControl": {
+    "enabled": true,
+    "statePath": "state/runtime-control.json",
+    "restartEnabled": false,
+    "restartDelayMs": 750,
+    "restartExitCode": 75,
+    "allowUsernameFallback": true
+  },
   "logging": {
     "participation": {
       "enabled": true,
       "path": "logs/participation-events.jsonl",
+      "maxBytes": 5242880,
+      "maxArchives": 5
+    },
+    "runtimeControl": {
+      "enabled": true,
+      "path": "logs/runtime-control.jsonl",
       "maxBytes": 5242880,
       "maxArchives": 5
     }

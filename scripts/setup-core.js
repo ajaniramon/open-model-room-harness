@@ -86,6 +86,10 @@ export function validateSetup(input) {
   if (input.ownerId && !/^\d{15,22}$/.test(clean(input.ownerId, 100))) {
     throw new Error("Discord user IDs contain 15–22 digits. Use the username field as a fallback.");
   }
+  const runtimeRestartEnabled = input.runtimeRestartEnabled === true;
+  if (runtimeRestartEnabled && !clean(input.ownerId, 100)) {
+    throw new Error("Supervised runtime restart requires the numeric owner Discord user ID.");
+  }
   let baseUrl = "";
   if (definition.baseUrlEnv) {
     baseUrl = normalizeOpenAiCompatibleBaseUrl(
@@ -125,6 +129,7 @@ export function validateSetup(input) {
     botName: clean(input.botName, 80) || "JJ",
     timeZone: resolveTimeZone(clean(input.timeZone, 100)),
     participation,
+    runtimeRestartEnabled,
     visualIdentity:
       clean(input.visualIdentity, 800) ||
       "A distinctive adult AI engineering team lead; customize this description.",
@@ -208,10 +213,24 @@ export function buildConfigJson(config) {
       },
       statePath: "state/participation-state.json",
     },
+    runtimeControl: {
+      enabled: true,
+      statePath: "state/runtime-control.json",
+      restartEnabled: config.runtimeRestartEnabled,
+      restartDelayMs: 750,
+      restartExitCode: 75,
+      allowUsernameFallback: true,
+    },
     logging: {
       participation: {
         enabled: true,
         path: "logs/participation-events.jsonl",
+        maxBytes: 5_242_880,
+        maxArchives: 5,
+      },
+      runtimeControl: {
+        enabled: true,
+        path: "logs/runtime-control.jsonl",
         maxBytes: 5_242_880,
         maxArchives: 5,
       },

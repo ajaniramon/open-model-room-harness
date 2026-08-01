@@ -38,6 +38,7 @@ Explore the full multilingual project guide at
 | Codex | Optional owner-gated local workspace delegation |
 | Organic participation | Configurable spontaneous replies with cooldown/rate limits |
 | Participation governor | Global guild budget, conversation windows, progressive user cooldown, and temporary spam blocks |
+| Runtime control | Persistent maintenance mode and optional supervisor-backed restart from Discord |
 | Message timestamps | Every context message carries its post time, age, and time zone |
 
 The security boundary is enforced in the application, not merely described in a
@@ -217,6 +218,9 @@ participation governor is disabled.
 @JJ enable audio mode
 @JJ draw a picture of the current situation
 @JJ generate an image using model nano-banana-2-lite :: a goblin SRE
+@JJ maintenance on
+@JJ wake
+@JJ status
 ```
 
 Web and X/Twitter research, image generation, escalation, audio mode, and Codex are owner-gated.
@@ -259,6 +263,20 @@ restart:
 The desktop and CLI installers create a private, Git-ignored `config.json` from
 `config.example.json`. Hot changes are validated and written there atomically;
 environment variables documented in `.env.example` remain deployment fallbacks.
+
+## Remote runtime control
+
+`maintenance on`, `wake`, and `status` are deterministic owner commands handled
+before inference. Maintenance persists across restarts and keeps Discord connected
+only to receive a later owner control command; all normal replies, tools, spontaneous
+participation, and model calls remain paused.
+
+`restart runtime` is disabled by default. The desktop installer can enable it when
+a numeric owner ID is present, but only do so behind WinSW, systemd, Docker, or
+another supervisor. The command flushes state and audit logs, acknowledges the
+request, and exits non-zero for the supervisor to relaunch. Restart never accepts
+the username fallback. Control events are written without message bodies to a
+rotating `logs/runtime-control.jsonl` audit log.
 
 ## Private character prompt
 

@@ -59,8 +59,19 @@ test("builds a secret-free config.json with participation controls", () => {
   assert.equal(payload.participation.cooldown.maxSeconds, 90);
   assert.equal(payload.participation.autoban.enabled, false);
   assert.deepEqual(payload.permissions.owner.allowedUserIds, ["123456789012345678"]);
+  assert.equal(payload.runtimeControl.restartEnabled, false);
+  assert.equal(payload.logging.runtimeControl.path, "logs/runtime-control.jsonl");
   assert.equal(buildConfigJson(config).includes("discord-test-value"), false);
   assert.equal(buildConfigJson(config).includes("provider-test-value"), false);
+});
+
+test("enables supervised restart only with an immutable numeric owner ID", () => {
+  const payload = JSON.parse(buildConfigJson(validateSetup(valid({ runtimeRestartEnabled: true }))));
+  assert.equal(payload.runtimeControl.restartEnabled, true);
+  assert.throws(
+    () => validateSetup(valid({ ownerId: "", ownerUsername: "operator", runtimeRestartEnabled: true })),
+    /numeric owner Discord user ID/,
+  );
 });
 
 test("rejects invalid participation values from the installer", () => {

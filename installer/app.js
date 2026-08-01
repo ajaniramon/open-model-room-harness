@@ -154,6 +154,7 @@ form.addEventListener("submit", async (event) => {
     return;
   }
   data.installCodex = form.elements.installCodex.checked;
+  data.runtimeRestartEnabled = form.elements.runtimeRestartEnabled.checked;
   data.runTests = form.elements.runTests.checked;
   data.autobanEnabled = form.elements.autobanEnabled.checked;
   data.replaceExisting = form.elements.replaceExisting?.checked || false;

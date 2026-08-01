@@ -70,4 +70,7 @@ test("loads neutral participation defaults without a private owner", () => {
   assert.equal(config.participationPolicy.autoban.enabled, true);
   assert.equal(config.ownerUserIds.size, 0);
   assert.equal(config.ownerUsernames.size, 0);
+  assert.equal(config.runtimeControlEnabled, true);
+  assert.equal(config.runtimeControlRestartEnabled, false);
+  assert.match(config.runtimeControlAudit.path, /runtime-control\.jsonl$/);
 });

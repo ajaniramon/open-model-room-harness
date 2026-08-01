@@ -9,6 +9,7 @@ import { JJ_VISUAL_IDENTITY_SYSTEM_SECTION } from "./jj-identity.js";
 import { ModelClient } from "./model-client.js";
 import { ParticipationController } from "./participation-policy.js";
 import { JsonlRequestLogger } from "./request-logger.js";
+import { RuntimeControl } from "./runtime-control.js";
 import { VisionAnalyzer } from "./vision.js";
 import { TavilyClient, WebToolRuntime } from "./web-tools.js";
 import { FxTwitterClient, KeylessXDiscovery } from "./x-tools.js";
@@ -40,6 +41,14 @@ const participationController = await new ParticipationController({
   statePath: config.participationStatePath,
   auditLogger: participationAuditLogger,
 }).load();
+const runtimeControlAuditLogger = new JsonlRequestLogger(config.runtimeControlAudit);
+const runtimeControl = config.runtimeControlEnabled
+  ? await new RuntimeControl({
+      statePath: config.runtimeControlStatePath,
+      auditLogger: runtimeControlAuditLogger,
+      restartEnabled: config.runtimeControlRestartEnabled,
+    }).load()
+  : null;
 const modelClient = new ModelClient(config, fetch, webTools);
 const audioModeState = new AudioModeState(config.audioModeStatePath);
 await audioModeState.load();
@@ -55,7 +64,27 @@ const codexRunner = new CodexRunner({
   projectWorkspace: config.codexProjectWorkspace,
   yoloWorkspace: config.codexYoloWorkspace,
 });
-const client = createDiscordBot({
+let client = null;
+let shuttingDown = false;
+const shutdown = async (signal, exitCode = 0) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.info(`Received ${signal}; disconnecting companion.`);
+  client?.destroy();
+  await participationController.close();
+  await participationAuditLogger.close();
+  await runtimeControl?.close();
+  process.exit(exitCode);
+};
+const requestRuntimeRestart = () => {
+  const timer = setTimeout(
+    () => shutdown("owner runtime restart", config.runtimeControlRestartExitCode),
+    config.runtimeControlRestartDelayMs,
+  );
+  timer.unref();
+};
+
+client = createDiscordBot({
   config,
   nanoGpt: modelClient,
   codexRunner,
@@ -64,19 +93,10 @@ const client = createDiscordBot({
   imageClient,
   visionAnalyzer,
   participationController,
+  runtimeControl,
+  requestRuntimeRestart,
   systemPrompt,
 });
-
-let shuttingDown = false;
-const shutdown = async (signal) => {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  console.info(`Received ${signal}; disconnecting JJ.`);
-  client.destroy();
-  await participationController.close();
-  await participationAuditLogger.close();
-  process.exit(0);
-};
 
 process.once("SIGINT", () => shutdown("SIGINT"));
 process.once("SIGTERM", () => shutdown("SIGTERM"));
