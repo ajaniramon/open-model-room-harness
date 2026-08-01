@@ -10,6 +10,7 @@ import {
 
 export const root = resolve(import.meta.dirname, "..");
 export const envPath = resolve(root, ".env");
+export const configPath = resolve(root, "config.json");
 export const promptPath = resolve(root, "src", "system-prompt.txt");
 export const promptExamplePath = resolve(root, "src", "system-prompt.example.txt");
 
@@ -59,6 +60,14 @@ function clean(value, maximum = 20_000) {
   return typeof value === "string" ? value.trim().slice(0, maximum) : "";
 }
 
+function wholeNumber(value, fallback, label, min, max) {
+  const parsed = value === undefined || value === "" ? fallback : Number(value);
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+    throw new Error(`${label} must be an integer between ${min} and ${max}.`);
+  }
+  return parsed;
+}
+
 export function validateSetup(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new Error("Configuration payload is invalid.");
@@ -83,6 +92,24 @@ export function validateSetup(input) {
       clean(input.baseUrl, 2_000) || definition.defaultBaseUrl,
     );
   }
+  const participation = {
+    budget: {
+      maxResponses: wholeNumber(input.budgetMaxResponses, 12, "Global response budget", 1, 500),
+      windowMinutes: wholeNumber(input.budgetWindowMinutes, 10, "Budget window", 1, 1_440),
+    },
+    conversation: {
+      turns: wholeNumber(input.conversationTurns, 5, "Conversation turns", 1, 20),
+      idleMinutes: wholeNumber(input.conversationIdleMinutes, 10, "Conversation idle expiry", 1, 1_440),
+    },
+    cooldown: {
+      baseSeconds: wholeNumber(input.cooldownBaseSeconds, 3, "Cooldown base", 0, 3_600),
+      maxSeconds: wholeNumber(input.cooldownMaxSeconds, 60, "Cooldown maximum", 0, 86_400),
+    },
+    autobanEnabled: input.autobanEnabled !== false,
+  };
+  if (participation.cooldown.maxSeconds < participation.cooldown.baseSeconds) {
+    throw new Error("Cooldown maximum must be at least the cooldown base.");
+  }
   return {
     provider,
     discordToken: clean(input.discordToken),
@@ -97,6 +124,7 @@ export function validateSetup(input) {
     ownerUsername: clean(input.ownerUsername, 100),
     botName: clean(input.botName, 80) || "JJ",
     timeZone: resolveTimeZone(clean(input.timeZone, 100)),
+    participation,
     visualIdentity:
       clean(input.visualIdentity, 800) ||
       "A distinctive adult AI engineering team lead; customize this description.",
@@ -124,6 +152,8 @@ export function buildEnvText(config) {
     JJ_BLOCKED_USERNAMES: "",
     JJ_CONTEXT_TIMESTAMPS: "true",
     JJ_TIME_ZONE: config.timeZone,
+    JJ_OWNER_USER_IDS: ownerIds,
+    JJ_OWNER_USERNAMES: ownerNames,
     JJ_WEB_ALLOWED_USER_IDS: ownerIds,
     JJ_WEB_ALLOWED_USERNAMES: ownerNames,
     JJ_AUDIO_ALLOWED_USER_IDS: ownerIds,
@@ -144,6 +174,49 @@ export function buildEnvText(config) {
       .join("\n") +
     "\n"
   );
+}
+
+export function buildConfigJson(config) {
+  const participation = config.participation;
+  return `${JSON.stringify({
+    permissions: {
+      owner: {
+        allowedUserIds: config.ownerId ? [config.ownerId] : [],
+        allowedUsernames: config.ownerUsername ? [config.ownerUsername.toLowerCase()] : [],
+      },
+    },
+    participation: {
+      enabled: true,
+      budget: participation.budget,
+      conversation: participation.conversation,
+      cooldown: {
+        baseSeconds: participation.cooldown.baseSeconds,
+        multiplier: 2,
+        maxSeconds: participation.cooldown.maxSeconds,
+        decaySeconds: 120,
+        resetMinutes: 10,
+      },
+      autoban: {
+        enabled: participation.autobanEnabled,
+        triggers: 8,
+        windowSeconds: 20,
+        cooldownRejections: 4,
+        durationMinutes: 10,
+        repeatWindowHours: 24,
+        repeatDurationMinutes: 60,
+        maxDurationMinutes: 360,
+      },
+      statePath: "state/participation-state.json",
+    },
+    logging: {
+      participation: {
+        enabled: true,
+        path: "logs/participation-events.jsonl",
+        maxBytes: 5_242_880,
+        maxArchives: 5,
+      },
+    },
+  }, null, 2)}\n`;
 }
 
 async function atomicPrivateWrite(path, contents) {
@@ -179,10 +252,11 @@ export async function pathExists(path) {
 }
 
 export async function writeSetupFiles(config) {
-  if ((await pathExists(envPath)) && !config.replaceExisting) {
-    throw new Error(".env already exists. Confirm replacement to continue.");
+  if (((await pathExists(envPath)) || (await pathExists(configPath))) && !config.replaceExisting) {
+    throw new Error("Configuration already exists. Confirm replacement to continue.");
   }
   await atomicPrivateWrite(envPath, buildEnvText(config));
+  await atomicPrivateWrite(configPath, buildConfigJson(config));
   if (!(await pathExists(promptPath))) {
     await copyFile(promptExamplePath, promptPath);
     const prompt = (await readFile(promptPath, "utf8")).replaceAll("{{BOT_NAME}}", config.botName);

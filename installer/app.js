@@ -155,6 +155,7 @@ form.addEventListener("submit", async (event) => {
   }
   data.installCodex = form.elements.installCodex.checked;
   data.runTests = form.elements.runTests.checked;
+  data.autobanEnabled = form.elements.autobanEnabled.checked;
   data.replaceExisting = form.elements.replaceExisting?.checked || false;
   const button = document.querySelector("#generate");
   button.disabled = true;

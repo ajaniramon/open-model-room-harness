@@ -63,3 +63,11 @@ test("uses a capable Chinese vision sidecar because MiMo is text-only", () => {
   assert.equal(config.visionBaseUrl, "https://nano-gpt.com/api/v1/chat/completions");
   assert.equal(config.visionMaxImages, 4);
 });
+
+test("loads neutral participation defaults without a private owner", () => {
+  assert.equal(config.participationPolicy.budget.maxResponses, 12);
+  assert.equal(config.participationPolicy.conversation.turns, 5);
+  assert.equal(config.participationPolicy.autoban.enabled, true);
+  assert.equal(config.ownerUserIds.size, 0);
+  assert.equal(config.ownerUsernames.size, 0);
+});

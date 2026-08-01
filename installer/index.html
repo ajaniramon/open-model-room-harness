@@ -14,7 +14,7 @@
         <div class="title">
           <span class="signal"></span>
           <strong>OPEN MODEL ROOM</strong>
-          <i>// INSTALL CONSOLE 1.4</i>
+          <i>// INSTALL CONSOLE 1.5</i>
         </div>
         <div class="window-actions">
           <button id="minimize" type="button" aria-label="Minimize">—</button>
@@ -38,8 +38,9 @@
           <ol>
             <li class="active"><b>01</b><span>PR0ViDER</span><i>Primary model route</i></li>
             <li><b>02</b><span>DiSCORD</span><i>Bot and owner identity</i></li>
-            <li><b>03</b><span>0PTiONS</span><i>Optional capabilities</i></li>
-            <li><b>04</b><span>GENERATE</span><i>Write and verify</i></li>
+            <li><b>03</b><span>G0VERN</span><i>Participation limits</i></li>
+            <li><b>04</b><span>0PTiONS</span><i>Optional capabilities</i></li>
+            <li><b>05</b><span>GENERATE</span><i>Write and verify</i></li>
           </ol>
           <div class="integrity">
             <span>CONFIG INTEGRITY</span>
@@ -141,7 +142,44 @@
             </fieldset>
 
             <fieldset>
-              <legend><b>03</b> 0PTiONAL PAYLOADS</legend>
+              <legend><b>03</b> PARTiCiPATiON GOVERNOR</legend>
+              <div class="field-grid">
+                <label class="field">
+                  <span>GLOBAL.BUDGET, REPLiES PER WiNDOW</span>
+                  <input name="budgetMaxResponses" type="number" min="1" max="500" value="12" required />
+                </label>
+                <label class="field">
+                  <span>WiNDOW.MiNUTES, SHARED ACROSS CHANNELS</span>
+                  <input name="budgetWindowMinutes" type="number" min="1" max="1440" value="10" required />
+                </label>
+              </div>
+              <div class="field-grid">
+                <label class="field">
+                  <span>CONVERSATiON.TURNS, AFTER ONE MENTiON</span>
+                  <input name="conversationTurns" type="number" min="1" max="20" value="5" required />
+                </label>
+                <label class="field">
+                  <span>CONVERSATiON.iDLE, MiNUTES TO EXPiRE</span>
+                  <input name="conversationIdleMinutes" type="number" min="1" max="1440" value="10" required />
+                </label>
+              </div>
+              <div class="field-grid">
+                <label class="field">
+                  <span>COOLDOWN.BASE, SECONDS</span>
+                  <input name="cooldownBaseSeconds" type="number" min="0" max="3600" value="3" required />
+                </label>
+                <label class="field">
+                  <span>COOLDOWN.CEILiNG, SECONDS</span>
+                  <input name="cooldownMaxSeconds" type="number" min="0" max="86400" value="60" required />
+                </label>
+              </div>
+              <div class="toggles">
+                <label><input name="autobanEnabled" type="checkbox" checked /><span>AUTOBAN CLEAR SPAM // AUTO-UNLOCK</span></label>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend><b>04</b> 0PTiONAL PAYLOADS</legend>
               <div class="field-grid">
                 <label class="field">
                   <span>TAViLY.KEY, WEB SEARCH UPLiNK</span>

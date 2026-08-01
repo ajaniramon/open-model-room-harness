@@ -37,6 +37,7 @@ Explore the full multilingual project guide at
 | Escalation | One-shot specialist model routing with a normal-model handoff |
 | Codex | Optional owner-gated local workspace delegation |
 | Organic participation | Configurable spontaneous replies with cooldown/rate limits |
+| Participation governor | Global guild budget, conversation windows, progressive user cooldown, and temporary spam blocks |
 | Message timestamps | Every context message carries its post time, age, and time zone |
 
 The security boundary is enforced in the application, not merely described in a
@@ -198,9 +199,10 @@ Development mode:
 npm run dev
 ```
 
-By default the bot responds to DMs, direct mentions, and replies to its messages.
-Set `JJ_TRIGGER_MODE=all` only if you intentionally want every human message in an
-allowed channel to trigger a model request.
+By default the bot responds to DMs and a direct mention opens the configured
+same-user conversation window. Once that window expires, replies alone do not bypass
+the new-mention requirement. `JJ_TRIGGER_MODE` remains the legacy fallback when the
+participation governor is disabled.
 
 ## Example commands
 
@@ -226,6 +228,37 @@ local root. It is disabled by default. To use it, set `JJ_CODEX_YOLO_ENABLED=tru
 and point `JJ_CODEX_YOLO_WORKSPACE` at a directory whose contents Codex may
 intentionally read and modify. This invokes Codex with approvals and sandboxing
 bypassed; ordinary `spawn codex` commands remain workspace-bounded.
+
+## Participation governor
+
+The harness prevents a popular companion from taking over a room with one response
+budget shared across all channels in each server, progressive per-user cooldowns,
+and a bounded conversation window. By default, a mention opens five interactions
+for that user and channel; after the window or ten minutes of inactivity, a new
+mention is required. Spontaneous messages consume the same global budget and are
+therefore naturally the lowest-priority participation.
+
+Clear mention spam can trigger an internal temporary block that expires
+automatically. It does not ban or timeout the Discord account and needs no moderation
+permissions. Reasons and expirations are recorded without message contents in a
+rotating JSONL audit log.
+
+The owner is exempt and can change values immediately without model inference or a
+restart:
+
+```text
+@JJ limits show
+@JJ limits set budget.maxResponses 15
+@JJ limits set conversation.turns 4
+@JJ limits set cooldown.maxSeconds 90
+@JJ limits set autoban.enabled false
+@JJ limits unban @user
+@JJ limits reset
+```
+
+The desktop and CLI installers create a private, Git-ignored `config.json` from
+`config.example.json`. Hot changes are validated and written there atomically;
+environment variables documented in `.env.example` remain deployment fallbacks.
 
 ## Private character prompt
 

@@ -1,5 +1,6 @@
 node_modules/
 .env
+config.json
 src/system-prompt.txt
 coverage/
 site-dist/

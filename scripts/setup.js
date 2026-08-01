@@ -10,6 +10,7 @@ import {
 
 const root = resolve(import.meta.dirname, "..");
 const envPath = resolve(root, ".env");
+const configPath = resolve(root, "config.json");
 const promptPath = resolve(root, "src", "system-prompt.txt");
 const promptExamplePath = resolve(root, "src", "system-prompt.example.txt");
 
@@ -83,6 +84,14 @@ async function confirm(question, fallback = true) {
   return answer === "y" || answer === "yes";
 }
 
+async function askInteger(question, fallback, min, max) {
+  while (true) {
+    const value = Number(await ask(question, String(fallback)));
+    if (Number.isInteger(value) && value >= min && value <= max) return value;
+    console.log(`Enter an integer between ${min} and ${max}.`);
+  }
+}
+
 async function choose(question, choices, fallback) {
   console.log(`\n${question}`);
   choices.forEach((choice, index) => {
@@ -117,14 +126,18 @@ function run(command, args) {
 console.log("\nOpen Model Room Harness setup");
 console.log("=============================\n");
 
-try {
-  await readFile(envPath, "utf8");
-  if (!(await confirm(".env already exists. Replace it", false))) {
-    console.log("Setup cancelled without changing .env.");
-    process.exit(0);
+let existingConfiguration = false;
+for (const path of [envPath, configPath]) {
+  try {
+    await readFile(path, "utf8");
+    existingConfiguration = true;
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
   }
-} catch (error) {
-  if (error.code !== "ENOENT") throw error;
+}
+if (existingConfiguration && !(await confirm("Configuration already exists. Replace it", false))) {
+  console.log("Setup cancelled without changing configuration.");
+  process.exit(0);
 }
 
 const discordToken = await askSecret("Discord bot token", true);
@@ -225,6 +238,18 @@ const timeZone = resolveTimeZone(
     Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
   ),
 );
+const budgetMaxResponses = await askInteger("Global replies per budget window", 12, 1, 500);
+const budgetWindowMinutes = await askInteger("Global budget window in minutes", 10, 1, 1_440);
+const conversationTurns = await askInteger("Conversation turns after one mention", 5, 1, 20);
+const conversationIdleMinutes = await askInteger("Conversation idle expiry in minutes", 10, 1, 1_440);
+const cooldownBaseSeconds = await askInteger("Progressive cooldown base in seconds", 3, 0, 3_600);
+const cooldownMaxSeconds = await askInteger(
+  "Progressive cooldown maximum in seconds",
+  Math.max(60, cooldownBaseSeconds),
+  cooldownBaseSeconds,
+  86_400,
+);
+const autobanEnabled = await confirm("Enable temporary internal autoban for clear spam", true);
 const voiceId = elevenLabsApiKey
   ? await ask("ElevenLabs voice ID", "21m00Tcm4TlvDq8ikWAM")
   : "21m00Tcm4TlvDq8ikWAM";
@@ -251,6 +276,8 @@ const values = {
   JJ_BLOCKED_USERNAMES: "",
   JJ_CONTEXT_TIMESTAMPS: "true",
   JJ_TIME_ZONE: timeZone,
+  JJ_OWNER_USER_IDS: ownerIds,
+  JJ_OWNER_USERNAMES: ownerNames,
   JJ_WEB_ALLOWED_USER_IDS: ownerIds,
   JJ_WEB_ALLOWED_USERNAMES: ownerNames,
   JJ_AUDIO_ALLOWED_USER_IDS: ownerIds,
@@ -273,6 +300,50 @@ const envText =
   "\n";
 await writeFile(envPath, envText, { encoding: "utf8", mode: 0o600 });
 await chmod(envPath, 0o600).catch(() => undefined);
+await writeFile(
+  configPath,
+  `${JSON.stringify({
+    permissions: {
+      owner: {
+        allowedUserIds: ownerId ? [ownerId] : [],
+        allowedUsernames: ownerUsername ? [ownerUsername.toLowerCase()] : [],
+      },
+    },
+    participation: {
+      enabled: true,
+      budget: { maxResponses: budgetMaxResponses, windowMinutes: budgetWindowMinutes },
+      conversation: { turns: conversationTurns, idleMinutes: conversationIdleMinutes },
+      cooldown: {
+        baseSeconds: cooldownBaseSeconds,
+        multiplier: 2,
+        maxSeconds: cooldownMaxSeconds,
+        decaySeconds: 120,
+        resetMinutes: 10,
+      },
+      autoban: {
+        enabled: autobanEnabled,
+        triggers: 8,
+        windowSeconds: 20,
+        cooldownRejections: 4,
+        durationMinutes: 10,
+        repeatWindowHours: 24,
+        repeatDurationMinutes: 60,
+        maxDurationMinutes: 360,
+      },
+      statePath: "state/participation-state.json",
+    },
+    logging: {
+      participation: {
+        enabled: true,
+        path: "logs/participation-events.jsonl",
+        maxBytes: 5_242_880,
+        maxArchives: 5,
+      },
+    },
+  }, null, 2)}\n`,
+  { encoding: "utf8", mode: 0o600 },
+);
+await chmod(configPath, 0o600).catch(() => undefined);
 
 try {
   await readFile(promptPath, "utf8");

@@ -7,6 +7,8 @@ import { createDiscordBot } from "./discord-bot.js";
 import { NanoGptImageClient } from "./image-generation.js";
 import { JJ_VISUAL_IDENTITY_SYSTEM_SECTION } from "./jj-identity.js";
 import { ModelClient } from "./model-client.js";
+import { ParticipationController } from "./participation-policy.js";
+import { JsonlRequestLogger } from "./request-logger.js";
 import { VisionAnalyzer } from "./vision.js";
 import { TavilyClient, WebToolRuntime } from "./web-tools.js";
 import { FxTwitterClient, KeylessXDiscovery } from "./x-tools.js";
@@ -31,6 +33,13 @@ const webTools = new WebToolRuntime(
   new TavilyClient(config.tavilyApiKey),
   new FxTwitterClient(fetch, undefined, xDiscovery.searchPostUrls.bind(xDiscovery)),
 );
+const participationAuditLogger = new JsonlRequestLogger(config.participationAudit);
+const participationController = await new ParticipationController({
+  policy: config.participationPolicy,
+  configPath: config.configPath,
+  statePath: config.participationStatePath,
+  auditLogger: participationAuditLogger,
+}).load();
 const modelClient = new ModelClient(config, fetch, webTools);
 const audioModeState = new AudioModeState(config.audioModeStatePath);
 await audioModeState.load();
@@ -54,12 +63,18 @@ const client = createDiscordBot({
   elevenLabs,
   imageClient,
   visionAnalyzer,
+  participationController,
   systemPrompt,
 });
 
+let shuttingDown = false;
 const shutdown = async (signal) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.info(`Received ${signal}; disconnecting JJ.`);
   client.destroy();
+  await participationController.close();
+  await participationAuditLogger.close();
   process.exit(0);
 };
 

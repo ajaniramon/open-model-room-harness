@@ -4,6 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
+  configPath,
   envPath,
   pathExists,
   performSetup,
@@ -37,7 +38,7 @@ function safeSend(channel, payload) {
 ipcMain.handle("installer:status", async () => ({
   node: process.version,
   platform: process.platform,
-  envExists: await pathExists(envPath),
+  envExists: (await pathExists(envPath)) || (await pathExists(configPath)),
   promptExists: await pathExists(promptPath),
   providers: providerDefinitions,
 }));

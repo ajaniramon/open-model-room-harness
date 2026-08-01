@@ -9,6 +9,7 @@ import {
 import { prepareSpeechText } from "./audio-mode.js";
 import { JJ_VISUAL_IDENTITY } from "./jj-identity.js";
 import { formatMessageTimestamp, formatTimestampInstruction } from "./message-time.js";
+import { parseParticipationCommand } from "./participation-policy.js";
 import { SpontaneousGate } from "./spontaneous.js";
 
 const DISCORD_MESSAGE_LIMIT = 2_000;
@@ -329,14 +330,34 @@ export function isImageGenerationAuthorized(author, config) {
   return config.imageAllowedUserIds.has(id) || config.imageAllowedUsernames.has(username);
 }
 
-async function shouldRespond(message, client, config) {
-  if (message.author.id === client.user.id) return false;
-  if (isBlockedAuthor(message.author, config)) return false;
-  if (message.author.bot && !config.respondToBots) return false;
-  if (config.allowedChannelIds.size && !config.allowedChannelIds.has(message.channelId)) return false;
-  if (message.channel.type === ChannelType.DM) return true;
-  if (config.triggerMode === "all") return true;
-  return message.mentions.has(client.user) || (await isReplyToBot(message, client.user));
+export async function resolveResponseTrigger(message, client, config, participationController = null) {
+  const ignored = { directResponse: false, explicitMention: false, continuation: false };
+  if (message.author.id === client.user.id) return ignored;
+  if (isBlockedAuthor(message.author, config)) return ignored;
+  if (message.author.bot && !config.respondToBots) return ignored;
+  if (config.allowedChannelIds.size && !config.allowedChannelIds.has(message.channelId)) return ignored;
+  if (message.channel.type === ChannelType.DM) {
+    return { directResponse: true, explicitMention: false, continuation: false };
+  }
+
+  const explicitMention = message.mentions.has(client.user);
+  if (participationController?.enabled) {
+    const isOwner = participationController.isOwner(message.author, config);
+    if (explicitMention) return { directResponse: true, explicitMention: true, continuation: false };
+    const continuation = participationController.hasActiveConversation({
+      guildId: message.guildId,
+      channelId: message.channelId,
+      userId: message.author.id,
+      isOwner,
+    });
+    return { directResponse: continuation, explicitMention: false, continuation };
+  }
+
+  if (config.triggerMode === "all") {
+    return { directResponse: true, explicitMention, continuation: false };
+  }
+  const reply = await isReplyToBot(message, client.user);
+  return { directResponse: explicitMention || reply, explicitMention, continuation: false };
 }
 
 function isSpontaneousCandidate(message, client, config) {
@@ -492,6 +513,7 @@ export function createDiscordBot({
   elevenLabs = null,
   imageClient = null,
   visionAnalyzer = null,
+  participationController = null,
   systemPrompt,
   logger = console,
 }) {
@@ -514,12 +536,29 @@ export function createDiscordBot({
   });
 
   client.on(Events.MessageCreate, async (message) => {
-    const directResponse = await shouldRespond(message, client, config);
+    const trigger = await resolveResponseTrigger(message, client, config, participationController);
+    const directResponse = trigger.directResponse;
     const spontaneous =
       !directResponse &&
       isSpontaneousCandidate(message, client, config) &&
       spontaneousGate.consider(message.channelId);
     if (!directResponse && !spontaneous) return;
+    const ownerAuthorized = participationController?.isOwner(message.author, config) || false;
+    const participationCommand = directResponse ? parseParticipationCommand(message.content) : null;
+    const admission = participationController
+      ? await participationController.reserve({
+          guildId: message.guildId,
+          channelId: message.channelId,
+          userId: message.author.id,
+          username: message.author.username,
+          isOwner: ownerAuthorized,
+          explicitMention: trigger.explicitMention,
+          continuation: trigger.continuation,
+          kind: spontaneous ? "spontaneous" : "direct",
+        })
+      : { allowed: true, reservationId: null };
+    if (!admission.allowed) return;
+    const participationReservationId = admission.reservationId;
     const webRequested = requestsWebTools(message.content);
     const escalationRequest = parseEscalationCommand(message.content);
     const codexRequest = parseCodexDelegation(message.content);
@@ -575,6 +614,7 @@ export function createDiscordBot({
     const current = previous
       .catch(() => undefined)
       .then(async () => {
+        let participationCommitted = false;
         const audioResponseEnabled = shouldUseAudioResponse(
           message.author,
           directResponse,
@@ -588,6 +628,7 @@ export function createDiscordBot({
           let visionObservation = null;
           if (
             directResponse &&
+            !participationCommand &&
             !audioModeCommand &&
             !imageRequest &&
             !codexRequest &&
@@ -610,7 +651,15 @@ export function createDiscordBot({
                 "JJ must say that she could not inspect the image instead of guessing.";
             }
           }
-          if (audioModeCommand !== null && !audioModeCommandAuthorized) {
+          if (participationCommand && !ownerAuthorized) {
+            response = "Participation controls are owner-only.";
+            forceTextResponse = true;
+          } else if (participationCommand) {
+            response = await participationController.executeAdminCommand(participationCommand, {
+              guildId: message.guildId,
+            });
+            forceTextResponse = true;
+          } else if (audioModeCommand !== null && !audioModeCommandAuthorized) {
             response =
               "*JJ covers the audio console with one hand.* Audio mode is owner-only, and this Discord identity is not authorized.";
           } else if (audioModeCommandAuthorized) {
@@ -653,6 +702,8 @@ export function createDiscordBot({
               logger.info(
                 `Image generation complete model=${generation.model} promptChars=${generation.prompt.length} images=${generation.images.length}`,
               );
+              await participationController?.commit(participationReservationId);
+              participationCommitted = true;
               spontaneousGate.recordResponse(message.channelId);
               return;
             } catch (error) {
@@ -770,8 +821,11 @@ export function createDiscordBot({
             elevenLabs,
             logger,
           });
+          await participationController?.commit(participationReservationId);
+          participationCommitted = true;
           spontaneousGate.recordResponse(message.channelId);
         } catch (error) {
+          if (!participationCommitted) participationController?.cancel(participationReservationId);
           logger.error("Failed to answer Discord message", error);
           await sendResponse(
             message,
@@ -782,6 +836,8 @@ export function createDiscordBot({
               logger,
             },
           ).catch(() => undefined);
+        } finally {
+          if (!participationCommitted) participationController?.cancel(participationReservationId);
         }
       })
       .finally(() => {

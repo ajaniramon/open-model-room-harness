@@ -1,0 +1,45 @@
+{
+  "permissions": {
+    "owner": {
+      "allowedUserIds": [],
+      "allowedUsernames": []
+    }
+  },
+  "participation": {
+    "enabled": true,
+    "budget": {
+      "maxResponses": 12,
+      "windowMinutes": 10
+    },
+    "conversation": {
+      "turns": 5,
+      "idleMinutes": 10
+    },
+    "cooldown": {
+      "baseSeconds": 3,
+      "multiplier": 2,
+      "maxSeconds": 60,
+      "decaySeconds": 120,
+      "resetMinutes": 10
+    },
+    "autoban": {
+      "enabled": true,
+      "triggers": 8,
+      "windowSeconds": 20,
+      "cooldownRejections": 4,
+      "durationMinutes": 10,
+      "repeatWindowHours": 24,
+      "repeatDurationMinutes": 60,
+      "maxDurationMinutes": 360
+    },
+    "statePath": "state/participation-state.json"
+  },
+  "logging": {
+    "participation": {
+      "enabled": true,
+      "path": "logs/participation-events.jsonl",
+      "maxBytes": 5242880,
+      "maxArchives": 5
+    }
+  }
+}

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  buildConfigJson,
   buildEnvText,
   providerDefinitions,
   validateSetup,
@@ -41,7 +42,34 @@ test("builds an owner-gated env without leaking unrelated provider variables", (
   assert.match(env, /OPENAI_API_KEY="provider-test-value"/);
   assert.match(env, /JJ_CODEX_ALLOWED_USER_IDS="123456789012345678"/);
   assert.match(env, /JJ_IMAGE_ALLOWED_USERNAMES="_operator"/);
+  assert.match(env, /JJ_OWNER_USER_IDS="123456789012345678"/);
   assert.doesNotMatch(env, /ANTHROPIC_API_KEY/);
+});
+
+test("builds a secret-free config.json with participation controls", () => {
+  const config = validateSetup(valid({
+    budgetMaxResponses: "18",
+    conversationTurns: "4",
+    cooldownMaxSeconds: "90",
+    autobanEnabled: false,
+  }));
+  const payload = JSON.parse(buildConfigJson(config));
+  assert.equal(payload.participation.budget.maxResponses, 18);
+  assert.equal(payload.participation.conversation.turns, 4);
+  assert.equal(payload.participation.cooldown.maxSeconds, 90);
+  assert.equal(payload.participation.autoban.enabled, false);
+  assert.deepEqual(payload.permissions.owner.allowedUserIds, ["123456789012345678"]);
+  assert.equal(buildConfigJson(config).includes("discord-test-value"), false);
+  assert.equal(buildConfigJson(config).includes("provider-test-value"), false);
+});
+
+test("rejects invalid participation values from the installer", () => {
+  assert.throws(() => validateSetup(valid({ conversationTurns: "0" })), /Conversation turns/);
+  assert.throws(() => validateSetup(valid({ budgetMaxResponses: "many" })), /Global response budget/);
+  assert.throws(
+    () => validateSetup(valid({ cooldownBaseSeconds: "30", cooldownMaxSeconds: "10" })),
+    /Cooldown maximum/,
+  );
 });
 
 test("writes a validated time zone and enables message timestamps", () => {

@@ -2,7 +2,9 @@ import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config as loadEnv } from "dotenv";
+import { loadJsonConfig, setting } from "./config-source.js";
 import { resolveTimeZone } from "./message-time.js";
+import { normalizeParticipationPolicy } from "./participation-policy.js";
 import {
   DEFAULT_LOCAL_BASE_URL,
   openAiCompatibleChatUrl,
@@ -10,6 +12,34 @@ import {
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 loadEnv({ path: resolve(projectRoot, ".env"), quiet: true });
+const configPath = resolve(projectRoot, "config.json");
+const jsonConfig = loadJsonConfig(configPath);
+
+function configured(path, environmentName, fallback) {
+  return setting(jsonConfig, path, environmentName, fallback);
+}
+
+function configuredInteger(path, environmentName, fallback, { min, max }) {
+  const value = Number(configured(path, environmentName, fallback));
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw new Error(`${path} (${environmentName}) must be an integer between ${min} and ${max}`);
+  }
+  return value;
+}
+
+function configuredBoolean(path, environmentName, fallback) {
+  const value = configured(path, environmentName, fallback);
+  if (typeof value === "boolean") return value;
+  if (String(value).toLowerCase() === "true") return true;
+  if (String(value).toLowerCase() === "false") return false;
+  throw new Error(`${path} (${environmentName}) must be true or false`);
+}
+
+function configuredList(path, environmentName, fallback = []) {
+  const value = configured(path, environmentName, fallback);
+  const entries = Array.isArray(value) ? value : String(value || "").split(",");
+  return entries.map((entry) => String(entry).trim()).filter(Boolean);
+}
 
 function integer(name, fallback, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
   const raw = process.env[name];
@@ -44,6 +74,35 @@ const spontaneousMaxMessages = integer("JJ_SPONTANEOUS_MAX_MESSAGES", 24, { min:
 if (spontaneousMaxMessages < spontaneousMinMessages) {
   throw new Error("JJ_SPONTANEOUS_MAX_MESSAGES must be at least JJ_SPONTANEOUS_MIN_MESSAGES");
 }
+
+const participationPolicy = normalizeParticipationPolicy({
+  enabled: configuredBoolean("participation.enabled", "JJ_PARTICIPATION_ENABLED", true),
+  budget: {
+    maxResponses: configuredInteger("participation.budget.maxResponses", "JJ_PARTICIPATION_BUDGET_MAX_RESPONSES", 12, { min: 1, max: 500 }),
+    windowMinutes: configuredInteger("participation.budget.windowMinutes", "JJ_PARTICIPATION_BUDGET_WINDOW_MINUTES", 10, { min: 1, max: 1_440 }),
+  },
+  conversation: {
+    turns: configuredInteger("participation.conversation.turns", "JJ_PARTICIPATION_CONVERSATION_TURNS", 5, { min: 1, max: 20 }),
+    idleMinutes: configuredInteger("participation.conversation.idleMinutes", "JJ_PARTICIPATION_CONVERSATION_IDLE_MINUTES", 10, { min: 1, max: 1_440 }),
+  },
+  cooldown: {
+    baseSeconds: configuredInteger("participation.cooldown.baseSeconds", "JJ_PARTICIPATION_COOLDOWN_BASE_SECONDS", 3, { min: 0, max: 3_600 }),
+    multiplier: configuredInteger("participation.cooldown.multiplier", "JJ_PARTICIPATION_COOLDOWN_MULTIPLIER", 2, { min: 1, max: 10 }),
+    maxSeconds: configuredInteger("participation.cooldown.maxSeconds", "JJ_PARTICIPATION_COOLDOWN_MAX_SECONDS", 60, { min: 0, max: 86_400 }),
+    decaySeconds: configuredInteger("participation.cooldown.decaySeconds", "JJ_PARTICIPATION_COOLDOWN_DECAY_SECONDS", 120, { min: 1, max: 86_400 }),
+    resetMinutes: configuredInteger("participation.cooldown.resetMinutes", "JJ_PARTICIPATION_COOLDOWN_RESET_MINUTES", 10, { min: 1, max: 1_440 }),
+  },
+  autoban: {
+    enabled: configuredBoolean("participation.autoban.enabled", "JJ_PARTICIPATION_AUTOBAN_ENABLED", true),
+    triggers: configuredInteger("participation.autoban.triggers", "JJ_PARTICIPATION_AUTOBAN_TRIGGERS", 8, { min: 3, max: 100 }),
+    windowSeconds: configuredInteger("participation.autoban.windowSeconds", "JJ_PARTICIPATION_AUTOBAN_WINDOW_SECONDS", 20, { min: 5, max: 3_600 }),
+    cooldownRejections: configuredInteger("participation.autoban.cooldownRejections", "JJ_PARTICIPATION_AUTOBAN_COOLDOWN_REJECTIONS", 4, { min: 1, max: 100 }),
+    durationMinutes: configuredInteger("participation.autoban.durationMinutes", "JJ_PARTICIPATION_AUTOBAN_DURATION_MINUTES", 10, { min: 1, max: 10_080 }),
+    repeatWindowHours: configuredInteger("participation.autoban.repeatWindowHours", "JJ_PARTICIPATION_AUTOBAN_REPEAT_WINDOW_HOURS", 24, { min: 1, max: 8_760 }),
+    repeatDurationMinutes: configuredInteger("participation.autoban.repeatDurationMinutes", "JJ_PARTICIPATION_AUTOBAN_REPEAT_DURATION_MINUTES", 60, { min: 1, max: 10_080 }),
+    maxDurationMinutes: configuredInteger("participation.autoban.maxDurationMinutes", "JJ_PARTICIPATION_AUTOBAN_MAX_DURATION_MINUTES", 360, { min: 1, max: 43_200 }),
+  },
+});
 
 const subscriptionEndpoint = "https://nano-gpt.com/api/subscription/v1/chat/completions";
 const paidEndpoint = "https://nano-gpt.com/api/v1/chat/completions";
@@ -177,6 +236,8 @@ const escalationModels = Object.freeze({
 });
 
 export const config = Object.freeze({
+  projectRoot,
+  configPath,
   discordToken: process.env.DISCORD_TOKEN?.trim() || "",
   nanoGptApiKey: process.env.NANOGPT_API_KEY?.trim() || "",
   tavilyApiKey: process.env.TAVILY_API_KEY?.trim() || "",
@@ -347,6 +408,20 @@ export const config = Object.freeze({
       .map((value) => value.trim().toLowerCase())
       .filter(Boolean),
   ),
+  ownerUserIds: new Set(
+    configuredList(
+      "permissions.owner.allowedUserIds",
+      "JJ_OWNER_USER_IDS",
+      process.env.JJ_CODEX_ALLOWED_USER_IDS || process.env.JJ_WEB_ALLOWED_USER_IDS || "",
+    ),
+  ),
+  ownerUsernames: new Set(
+    configuredList(
+      "permissions.owner.allowedUsernames",
+      "JJ_OWNER_USERNAMES",
+      process.env.JJ_CODEX_ALLOWED_USERNAMES || process.env.JJ_WEB_ALLOWED_USERNAMES || "",
+    ).map((value) => value.toLowerCase()),
+  ),
   escalationModels,
   escalationMaxOutputTokens: integer("JJ_ESCALATION_MAX_OUTPUT_TOKENS", 12_000, {
     min: 128,
@@ -360,6 +435,22 @@ export const config = Object.freeze({
   reasoningEffort: process.env.JJ_REASONING_EFFORT?.trim() || "high",
   apiTimeoutMs: integer("JJ_API_TIMEOUT_MS", 120_000, { min: 5_000, max: 300_000 }),
   maxToolIterations: integer("JJ_MAX_TOOL_ITERATIONS", 4, { min: 1, max: 8 }),
+  participationPolicy: Object.freeze(participationPolicy),
+  participationStatePath: resolve(
+    projectRoot,
+    String(configured("participation.statePath", "JJ_PARTICIPATION_STATE_PATH", "state/participation-state.json")),
+  ),
+  participationAudit: Object.freeze({
+    enabled: configuredBoolean("logging.participation.enabled", "JJ_PARTICIPATION_AUDIT_ENABLED", true),
+    path: resolve(
+      projectRoot,
+      String(configured("logging.participation.path", "JJ_PARTICIPATION_AUDIT_PATH", "logs/participation-events.jsonl")),
+    ),
+    maxBytes: configuredInteger("logging.participation.maxBytes", "JJ_PARTICIPATION_AUDIT_MAX_BYTES", 5 * 1024 * 1024, { min: 1_024, max: 1024 * 1024 * 1024 }),
+    maxArchives: configuredInteger("logging.participation.maxArchives", "JJ_PARTICIPATION_AUDIT_MAX_ARCHIVES", 5, { min: 1, max: 100 }),
+    includeBodies: false,
+    maxValueChars: 10_000,
+  }),
   spontaneousEnabled: enabled("JJ_SPONTANEOUS_ENABLED", true),
   spontaneousMinMessages,
   spontaneousMaxMessages,

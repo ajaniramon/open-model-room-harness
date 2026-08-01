@@ -14,6 +14,7 @@ import {
   normalizeCompiledImagePrompt,
   parseAudioModeCommand,
   parseEscalationCommand,
+  resolveResponseTrigger,
   parseImageGenerationCommand,
   parseCodexDelegation,
   requestsWebTools,
@@ -32,6 +33,48 @@ test("splits long responses below the configured limit without losing words", ()
   assert.ok(chunks.length > 1);
   assert.ok(chunks.every((chunk) => chunk.length <= 80));
   assert.equal(chunks.join(" "), input);
+});
+
+test("conversation policy opens on mention, follows the same-user window, then goes silent", async () => {
+  let active = false;
+  const controller = {
+    enabled: true,
+    isOwner: () => false,
+    hasActiveConversation: () => active,
+  };
+  const config = {
+    blockedUsernames: new Set(),
+    respondToBots: false,
+    allowedChannelIds: new Set(),
+    triggerMode: "all",
+  };
+  const client = { user: { id: "bot" } };
+  const message = {
+    author: { id: "person", username: "person", bot: false },
+    channel: { type: 0 },
+    guildId: "guild",
+    channelId: "channel",
+    mentions: { has: () => false },
+  };
+
+  assert.deepEqual(await resolveResponseTrigger(message, client, config, controller), {
+    directResponse: false,
+    explicitMention: false,
+    continuation: false,
+  });
+  active = true;
+  assert.deepEqual(await resolveResponseTrigger(message, client, config, controller), {
+    directResponse: true,
+    explicitMention: false,
+    continuation: true,
+  });
+  active = false;
+  message.mentions.has = () => true;
+  assert.deepEqual(await resolveResponseTrigger(message, client, config, controller), {
+    directResponse: true,
+    explicitMention: true,
+    continuation: false,
+  });
 });
 
 test("stamps context headers with the post time and its age", () => {
