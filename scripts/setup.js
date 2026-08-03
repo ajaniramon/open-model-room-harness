@@ -256,6 +256,16 @@ const runtimeRestartEnabled = ownerId
 const voiceId = elevenLabsApiKey
   ? await ask("ElevenLabs voice ID", "21m00Tcm4TlvDq8ikWAM")
   : "21m00Tcm4TlvDq8ikWAM";
+const enableMemory = await confirm(
+  "Enable cross-channel memory (stores notes distilled from room messages; owner-gated, opt-out per user)",
+  false,
+);
+const enableMemoryCapture = enableMemory
+  ? await confirm(
+      "Also enable passive capture (a model summarises idle conversations into notes)",
+      false,
+    )
+  : false;
 const installCodex = await confirm(
   "Install the optional Codex CLI for local delegated tasks",
   false,
@@ -278,6 +288,11 @@ const values = {
   JJ_VISUAL_IDENTITY: visualIdentity,
   JJ_BLOCKED_USERNAMES: "",
   JJ_CONTEXT_TIMESTAMPS: "true",
+  JJ_MEMORY_ENABLED: enableMemory ? "true" : "false",
+  JJ_MEMORY_ALLOWED_USER_IDS: enableMemory ? ownerIds : "",
+  JJ_MEMORY_ALLOWED_USERNAMES: enableMemory ? ownerNames : "",
+  JJ_MEMORY_EXTRACTION_ENABLED: enableMemoryCapture ? "true" : "false",
+  JJ_MEMORY_CAPTURE_MODE: "observation",
   JJ_TIME_ZONE: timeZone,
   JJ_OWNER_USER_IDS: ownerIds,
   JJ_OWNER_USERNAMES: ownerNames,

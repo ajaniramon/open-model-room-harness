@@ -94,6 +94,30 @@ test("writes a validated time zone and enables message timestamps", () => {
   assert.throws(() => validateSetup(valid({ timeZone: "Mars/Olympus_Mons" })), /time zone/);
 });
 
+test("memory ships disabled and only turns on when the operator asks", () => {
+  const off = buildEnvText(validateSetup(valid()));
+  assert.match(off, /JJ_MEMORY_ENABLED="false"/);
+  assert.match(off, /JJ_MEMORY_EXTRACTION_ENABLED="false"/);
+  assert.match(off, /JJ_MEMORY_ALLOWED_USER_IDS=""/);
+  assert.equal(JSON.parse(buildConfigJson(validateSetup(valid()))).memory.enabled, false);
+
+  const on = validateSetup(valid({ enableMemory: true, enableMemoryCapture: true }));
+  const env = buildEnvText(on);
+  assert.match(env, /JJ_MEMORY_ENABLED="true"/);
+  assert.match(env, /JJ_MEMORY_EXTRACTION_ENABLED="true"/);
+  assert.match(env, /JJ_MEMORY_CAPTURE_MODE="observation"/);
+  const json = JSON.parse(buildConfigJson(on));
+  assert.equal(json.memory.enabled, true);
+  assert.deepEqual(json.permissions.memory.allowedUserIds, ["123456789012345678"]);
+});
+
+test("passive capture cannot be enabled without memory itself", () => {
+  const config = validateSetup(valid({ enableMemoryCapture: true }));
+  assert.equal(config.enableMemory, false);
+  assert.equal(config.enableMemoryCapture, false);
+  assert.match(buildEnvText(config), /JJ_MEMORY_EXTRACTION_ENABLED="false"/);
+});
+
 test("reuses the primary key as the NanoGPT sidecar when NanoGPT is primary", () => {
   const config = validateSetup(valid({ provider: "nanogpt" }));
   assert.equal(config.nanoGptApiKey, config.primaryApiKey);

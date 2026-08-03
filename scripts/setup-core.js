@@ -128,6 +128,8 @@ export function validateSetup(input) {
     ownerUsername: clean(input.ownerUsername, 100),
     botName: clean(input.botName, 80) || "JJ",
     timeZone: resolveTimeZone(clean(input.timeZone, 100)),
+    enableMemory: input.enableMemory === true,
+    enableMemoryCapture: input.enableMemory === true && input.enableMemoryCapture === true,
     participation,
     runtimeRestartEnabled,
     visualIdentity:
@@ -156,6 +158,12 @@ export function buildEnvText(config) {
     JJ_VISUAL_IDENTITY: config.visualIdentity,
     JJ_BLOCKED_USERNAMES: "",
     JJ_CONTEXT_TIMESTAMPS: "true",
+    // Memory is opt-in at install time and only ever gated to the owner.
+    JJ_MEMORY_ENABLED: config.enableMemory ? "true" : "false",
+    JJ_MEMORY_ALLOWED_USER_IDS: config.enableMemory ? ownerIds : "",
+    JJ_MEMORY_ALLOWED_USERNAMES: config.enableMemory ? ownerNames : "",
+    JJ_MEMORY_EXTRACTION_ENABLED: config.enableMemoryCapture ? "true" : "false",
+    JJ_MEMORY_CAPTURE_MODE: "observation",
     JJ_TIME_ZONE: config.timeZone,
     JJ_OWNER_USER_IDS: ownerIds,
     JJ_OWNER_USERNAMES: ownerNames,
@@ -188,6 +196,21 @@ export function buildConfigJson(config) {
       owner: {
         allowedUserIds: config.ownerId ? [config.ownerId] : [],
         allowedUsernames: config.ownerUsername ? [config.ownerUsername.toLowerCase()] : [],
+      },
+      memory: {
+        allowedUserIds: config.enableMemory && config.ownerId ? [config.ownerId] : [],
+        allowedUsernames:
+          config.enableMemory && config.ownerUsername ? [config.ownerUsername.toLowerCase()] : [],
+      },
+    },
+    memory: {
+      enabled: config.enableMemory,
+      storePath: "state/memory.jsonl",
+      retentionDays: 90,
+      injection: { maxItems: 60, maxChars: 12_000 },
+      extraction: {
+        enabled: config.enableMemoryCapture,
+        captureMode: "observation",
       },
     },
     participation: {
@@ -222,6 +245,12 @@ export function buildConfigJson(config) {
       allowUsernameFallback: true,
     },
     logging: {
+      memory: {
+        enabled: true,
+        path: "logs/memory-events.jsonl",
+        maxBytes: 5_242_880,
+        maxArchives: 5,
+      },
       participation: {
         enabled: true,
         path: "logs/participation-events.jsonl",

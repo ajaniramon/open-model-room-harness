@@ -6,7 +6,7 @@ import { config } from "../src/config.js";
 import { parseCodexDelegation } from "../src/discord-bot.js";
 
 const exactDiscordMessage =
-  "@JJ please spawn codex agent to assess memory-implementation-plan. Tell him to find my-harness directory and cross the file with the codebase and advise if viable";
+  "@bot please spawn codex agent to assess memory-implementation-plan. Tell him to find my-harness directory and cross the file with the codebase and advise if viable";
 const parsed = parseCodexDelegation(exactDiscordMessage);
 if (!parsed) throw new Error("The exact Discord smoke-test message did not parse.");
 

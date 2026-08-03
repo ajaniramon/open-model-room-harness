@@ -140,6 +140,12 @@ async function boot() {
 }
 
 form.addEventListener("input", updateMeter);
+// Passive capture is meaningless without memory, so it stays locked until memory is on.
+document.querySelector("#enable-memory").addEventListener("change", (event) => {
+  const capture = document.querySelector("#enable-memory-capture");
+  capture.disabled = !event.target.checked;
+  if (!event.target.checked) capture.checked = false;
+});
 document.querySelector("#primary-api-key").addEventListener("input", () => scheduleModelLoad());
 document.querySelector("#local-base-url").addEventListener("input", () => {
   if (new FormData(form).get("provider") === "local") scheduleModelLoad();
@@ -155,6 +161,8 @@ form.addEventListener("submit", async (event) => {
   }
   data.installCodex = form.elements.installCodex.checked;
   data.runtimeRestartEnabled = form.elements.runtimeRestartEnabled.checked;
+  data.enableMemory = form.elements.enableMemory.checked;
+  data.enableMemoryCapture = form.elements.enableMemoryCapture.checked;
   data.runTests = form.elements.runTests.checked;
   data.autobanEnabled = form.elements.autobanEnabled.checked;
   data.replaceExisting = form.elements.replaceExisting?.checked || false;

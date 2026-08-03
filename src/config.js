@@ -69,6 +69,13 @@ if (!new Set(["nanogpt", "openai", "anthropic", "xai", "gemini", "local"]).has(c
   throw new Error("MODEL_PROVIDER must be one of: nanogpt, openai, anthropic, xai, gemini, local");
 }
 
+const memoryCaptureMode = String(
+  configured("memory.extraction.captureMode", "JJ_MEMORY_CAPTURE_MODE", "observation"),
+).toLowerCase();
+if (!new Set(["observation", "always"]).has(memoryCaptureMode)) {
+  throw new Error("memory.extraction.captureMode (JJ_MEMORY_CAPTURE_MODE) must be 'observation' or 'always'");
+}
+
 const spontaneousMinMessages = integer("JJ_SPONTANEOUS_MIN_MESSAGES", 8, { min: 2, max: 100 });
 const spontaneousMaxMessages = integer("JJ_SPONTANEOUS_MAX_MESSAGES", 24, { min: 2, max: 200 });
 if (spontaneousMaxMessages < spontaneousMinMessages) {
@@ -448,6 +455,125 @@ export const config = Object.freeze({
     ),
     maxBytes: configuredInteger("logging.participation.maxBytes", "JJ_PARTICIPATION_AUDIT_MAX_BYTES", 5 * 1024 * 1024, { min: 1_024, max: 1024 * 1024 * 1024 }),
     maxArchives: configuredInteger("logging.participation.maxArchives", "JJ_PARTICIPATION_AUDIT_MAX_ARCHIVES", 5, { min: 1, max: 100 }),
+    includeBodies: false,
+    maxValueChars: 10_000,
+  }),
+  // Memory is OFF by default. It stores content from a shared room, so an operator
+  // has to switch it on deliberately and take on the obligations in README §Memory.
+  memoryEnabled: configuredBoolean("memory.enabled", "JJ_MEMORY_ENABLED", false),
+  memoryAllowedUserIds: new Set(
+    configuredList("permissions.memory.allowedUserIds", "JJ_MEMORY_ALLOWED_USER_IDS").map(String),
+  ),
+  memoryAllowedUsernames: new Set(
+    configuredList("permissions.memory.allowedUsernames", "JJ_MEMORY_ALLOWED_USERNAMES").map(
+      (value) => String(value).toLowerCase(),
+    ),
+  ),
+  memoryStorePath: resolve(
+    projectRoot,
+    String(configured("memory.storePath", "JJ_MEMORY_STORE_PATH", "state/memory.jsonl")),
+  ),
+  memoryMaxRecords: configuredInteger("memory.maxRecords", "JJ_MEMORY_MAX_RECORDS", 5_000, {
+    min: 10,
+    max: 100_000,
+  }),
+  memoryMaxPerUser: configuredInteger("memory.maxPerUser", "JJ_MEMORY_MAX_PER_USER", 300, {
+    min: 5,
+    max: 10_000,
+  }),
+  memoryRetentionDays: configuredInteger("memory.retentionDays", "JJ_MEMORY_RETENTION_DAYS", 90, {
+    min: 1,
+    max: 3_650,
+  }),
+  memoryMaxTextChars: configuredInteger("memory.maxTextChars", "JJ_MEMORY_MAX_TEXT_CHARS", 300, {
+    min: 40,
+    max: 2_000,
+  }),
+  memoryInjectionMaxItems: configuredInteger(
+    "memory.injection.maxItems",
+    "JJ_MEMORY_INJECTION_MAX_ITEMS",
+    60,
+    { min: 1, max: 2_000 },
+  ),
+  memoryInjectionMaxChars: configuredInteger(
+    "memory.injection.maxChars",
+    "JJ_MEMORY_INJECTION_MAX_CHARS",
+    12_000,
+    { min: 100, max: 400_000 },
+  ),
+  // Passive capture is a second, separate switch: enabling memory alone only gives
+  // the explicit "remember this" commands.
+  memoryExtractionEnabled: configuredBoolean(
+    "memory.extraction.enabled",
+    "JJ_MEMORY_EXTRACTION_ENABLED",
+    false,
+  ),
+  memoryExtractionCaptureMode: memoryCaptureMode,
+  memoryExtractionProvider: String(
+    configured("memory.extraction.provider", "JJ_MEMORY_EXTRACTION_PROVIDER", "") || chatProvider,
+  ).toLowerCase(),
+  memoryExtractionModel: String(
+    configured("memory.extraction.model", "JJ_MEMORY_EXTRACTION_MODEL", "") || "",
+  ),
+  memoryExtractionBaseUrl: String(
+    configured("memory.extraction.baseUrl", "JJ_MEMORY_EXTRACTION_BASE_URL", "") || "",
+  ),
+  memoryExtractionIdleMs:
+    configuredInteger("memory.extraction.idleMinutes", "JJ_MEMORY_EXTRACTION_IDLE_MINUTES", 10, {
+      min: 1,
+      max: 1_440,
+    }) * 60_000,
+  memoryExtractionMinMessages: configuredInteger(
+    "memory.extraction.minMessages",
+    "JJ_MEMORY_EXTRACTION_MIN_MESSAGES",
+    4,
+    { min: 1, max: 200 },
+  ),
+  memoryExtractionMaxMessages: configuredInteger(
+    "memory.extraction.maxMessages",
+    "JJ_MEMORY_EXTRACTION_MAX_MESSAGES",
+    40,
+    { min: 2, max: 500 },
+  ),
+  memoryExtractionMaxChars: configuredInteger(
+    "memory.extraction.maxTranscriptChars",
+    "JJ_MEMORY_EXTRACTION_MAX_CHARS",
+    8_000,
+    { min: 200, max: 100_000 },
+  ),
+  memoryExtractionMaxFacts: configuredInteger(
+    "memory.extraction.maxFacts",
+    "JJ_MEMORY_EXTRACTION_MAX_FACTS",
+    5,
+    { min: 1, max: 20 },
+  ),
+  memoryExtractionMaxOutputTokens: configuredInteger(
+    "memory.extraction.maxOutputTokens",
+    "JJ_MEMORY_EXTRACTION_MAX_OUTPUT_TOKENS",
+    800,
+    { min: 128, max: 8_192 },
+  ),
+  memoryExtractionCheckIntervalMs:
+    configuredInteger(
+      "memory.extraction.checkIntervalSeconds",
+      "JJ_MEMORY_EXTRACTION_CHECK_SECONDS",
+      60,
+      { min: 5, max: 3_600 },
+    ) * 1_000,
+  memoryAudit: Object.freeze({
+    enabled: configuredBoolean("logging.memory.enabled", "JJ_MEMORY_AUDIT_ENABLED", true),
+    path: resolve(
+      projectRoot,
+      String(configured("logging.memory.path", "JJ_MEMORY_AUDIT_PATH", "logs/memory-events.jsonl")),
+    ),
+    maxBytes: configuredInteger("logging.memory.maxBytes", "JJ_MEMORY_AUDIT_MAX_BYTES", 5 * 1024 * 1024, {
+      min: 1_024,
+      max: 1024 * 1024 * 1024,
+    }),
+    maxArchives: configuredInteger("logging.memory.maxArchives", "JJ_MEMORY_AUDIT_MAX_ARCHIVES", 5, {
+      min: 1,
+      max: 100,
+    }),
     includeBodies: false,
     maxValueChars: 10_000,
   }),

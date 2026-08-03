@@ -145,35 +145,35 @@ test("authorizes web tools only for configured Discord identities", () => {
 });
 
 test("requires an explicit web action before exposing tools", () => {
-  assert.equal(requestsWebTools("@JJ busca noticias actuales"), true);
-  assert.equal(requestsWebTools("@JJ fetch https://example.com"), true);
-  assert.equal(requestsWebTools("@JJ resume https://example.com"), true);
-  assert.equal(requestsWebTools("@JJ search X for local AI news"), true);
-  assert.equal(requestsWebTools("@JJ read https://x.com/jack/status/20"), true);
-  assert.equal(requestsWebTools("@JJ tweet me a joke"), false);
-  assert.equal(requestsWebTools("@JJ qué opinas de este enlace https://example.com"), false);
-  assert.equal(requestsWebTools("@JJ cuéntame un chiste"), false);
+  assert.equal(requestsWebTools("@bot busca noticias actuales"), true);
+  assert.equal(requestsWebTools("@bot fetch https://example.com"), true);
+  assert.equal(requestsWebTools("@bot resume https://example.com"), true);
+  assert.equal(requestsWebTools("@bot search X for local AI news"), true);
+  assert.equal(requestsWebTools("@bot read https://x.com/jack/status/20"), true);
+  assert.equal(requestsWebTools("@bot tweet me a joke"), false);
+  assert.equal(requestsWebTools("@bot qué opinas de este enlace https://example.com"), false);
+  assert.equal(requestsWebTools("@bot cuéntame un chiste"), false);
 });
 
 test("parses supported escalation command forms", () => {
   assert.deepEqual(
-    parseEscalationCommand("@JJ escalate to opus-5 :: review the architecture"),
+    parseEscalationCommand("@bot escalate to opus-5 :: review the architecture"),
     { requestedModel: "opus-5", task: "review the architecture" },
   );
   assert.deepEqual(
-    parseEscalationCommand("@JJ escalate to Claude Opus 5 model and do identify two risks"),
+    parseEscalationCommand("@bot escalate to Claude Opus 5 model and do identify two risks"),
     { requestedModel: "Claude Opus 5", task: "identify two risks" },
   );
   assert.deepEqual(
     parseEscalationCommand(
-      "@JJ please escalate to kimi k3, read memory-improvements.md and write implementation plan. Advise when done.",
+      "@bot please escalate to kimi k3, read memory-improvements.md and write implementation plan. Advise when done.",
     ),
     {
       requestedModel: "kimi k3",
       task: "read memory-improvements.md and write implementation plan. Advise when done.",
     },
   );
-  assert.equal(parseEscalationCommand("@JJ tell opus to do something"), null);
+  assert.equal(parseEscalationCommand("@bot tell opus to do something"), null);
 });
 
 test("restricts escalation identity and resolves only whitelisted models", () => {
@@ -194,26 +194,26 @@ test("parses owner-only Codex delegation commands", () => {
     codexAllowedUserIds: new Set(["123"]),
     codexAllowedUsernames: new Set(["owner_user"]),
   };
-  assert.deepEqual(parseCodexDelegation("@JJ spawn codex :: inspect the project"), {
+  assert.deepEqual(parseCodexDelegation("@bot spawn codex :: inspect the project"), {
     task: "inspect the project",
   });
   assert.deepEqual(
-    parseCodexDelegation("@JJ CODEX YOLO :: find the target repository and run its tests"),
+    parseCodexDelegation("@bot CODEX YOLO :: find the target repository and run its tests"),
     {
       task: "find the target repository and run its tests",
       yolo: true,
     },
   );
   assert.deepEqual(
-    parseCodexDelegation("@JJ spawn codex :: explain the phrase codex yolo"),
+    parseCodexDelegation("@bot spawn codex :: explain the phrase codex yolo"),
     { task: "explain the phrase codex yolo" },
   );
-  assert.deepEqual(parseCodexDelegation("@JJ spawnea un codex para crear una demo"), {
+  assert.deepEqual(parseCodexDelegation("@bot spawnea un codex para crear una demo"), {
     task: "crear una demo",
   });
   assert.deepEqual(
     parseCodexDelegation(
-      "@JJ please spawn codex agent to assess memory-implementation-plan. Tell him to find my-harness directory and cross the file with the codebase and advise if viable",
+      "@bot please spawn codex agent to assess memory-implementation-plan. Tell him to find my-harness directory and cross the file with the codebase and advise if viable",
     ),
     {
       task:
@@ -222,7 +222,7 @@ test("parses owner-only Codex delegation commands", () => {
   );
   assert.deepEqual(
     parseCodexDelegation(
-      "@JJ please spawn codex agent and tell him to find open-model-room-harness directory and design an implementation plan for X/Twitter integration (read-only, for now only search and post fetch). Advise when done. Do not provide code details over this chat.",
+      "@bot please spawn codex agent and tell him to find open-model-room-harness directory and design an implementation plan for X/Twitter integration (read-only, for now only search and post fetch). Advise when done. Do not provide code details over this chat.",
     ),
     {
       task:
@@ -230,10 +230,10 @@ test("parses owner-only Codex delegation commands", () => {
     },
   );
   assert.deepEqual(
-    parseCodexDelegation("@JJ launch a codex agent and ask it to inspect the workspace"),
+    parseCodexDelegation("@bot launch a codex agent and ask it to inspect the workspace"),
     { task: "inspect the workspace" },
   );
-  assert.equal(parseCodexDelegation("@JJ qué opinas de Codex"), null);
+  assert.equal(parseCodexDelegation("@bot qué opinas de Codex"), null);
   assert.equal(isCodexAuthorized({ id: "999", username: "OWNER_USER" }, config), true);
   assert.equal(isCodexAuthorized({ id: "999", username: "goblin" }, config), false);
 });
@@ -243,11 +243,11 @@ test("parses owner-only audio mode toggles in Spanish and English", () => {
     audioAllowedUserIds: new Set(["123"]),
     audioAllowedUsernames: new Set(["owner_user"]),
   };
-  assert.equal(parseAudioModeCommand("@JJ activa audio mode"), true);
-  assert.equal(parseAudioModeCommand("@JJ enable audio mode"), true);
-  assert.equal(parseAudioModeCommand("@JJ desactiva audio mode"), false);
-  assert.equal(parseAudioModeCommand("@JJ disable audio mode"), false);
-  assert.equal(parseAudioModeCommand("@JJ qué opinas del audio mode"), null);
+  assert.equal(parseAudioModeCommand("@bot activa audio mode"), true);
+  assert.equal(parseAudioModeCommand("@bot enable audio mode"), true);
+  assert.equal(parseAudioModeCommand("@bot desactiva audio mode"), false);
+  assert.equal(parseAudioModeCommand("@bot disable audio mode"), false);
+  assert.equal(parseAudioModeCommand("@bot qué opinas del audio mode"), null);
   assert.equal(isAudioModeAuthorized({ id: "999", username: "OWNER_USER" }, config), true);
   assert.equal(isAudioModeAuthorized({ id: "999", username: "goblin" }, config), false);
 });
@@ -276,30 +276,30 @@ test("uses audio only for direct responses to the configured owner", () => {
 });
 
 test("parses image generation prompts, invention requests, and model selection", () => {
-  assert.deepEqual(parseImageGenerationCommand("@JJ draw a picture of a robot detective"), {
+  assert.deepEqual(parseImageGenerationCommand("@bot draw a picture of a robot detective"), {
     prompt: "a robot detective",
     requestedModel: null,
   });
-  assert.deepEqual(parseImageGenerationCommand("@JJ generate an image"), {
+  assert.deepEqual(parseImageGenerationCommand("@bot generate an image"), {
     prompt: null,
     requestedModel: null,
   });
   assert.deepEqual(
-    parseImageGenerationCommand("@JJ draw a picture of the current situation"),
+    parseImageGenerationCommand("@bot draw a picture of the current situation"),
     {
       prompt: null,
       requestedModel: null,
     },
   );
   assert.deepEqual(
-    parseImageGenerationCommand("@JJ generate an image of what is happening in cyberpunk style"),
+    parseImageGenerationCommand("@bot generate an image of what is happening in cyberpunk style"),
     {
       prompt: null,
       requestedModel: null,
     },
   );
   assert.deepEqual(
-    parseImageGenerationCommand("@JJ dibuja una imagen de la situaci\u00f3n actual"),
+    parseImageGenerationCommand("@bot dibuja una imagen de la situaci\u00f3n actual"),
     {
       prompt: null,
       requestedModel: null,
@@ -307,7 +307,7 @@ test("parses image generation prompts, invention requests, and model selection",
   );
   assert.deepEqual(
     parseImageGenerationCommand(
-      "@JJ generate an image using model nano-banana-2-lite :: a goblin debugging production",
+      "@bot generate an image using model nano-banana-2-lite :: a goblin debugging production",
     ),
     {
       prompt: "a goblin debugging production",
@@ -316,18 +316,18 @@ test("parses image generation prompts, invention requests, and model selection",
   );
   assert.deepEqual(
     parseImageGenerationCommand(
-      "@JJ create an image with model ideogram/v4/fast :: a technical poster",
+      "@bot create an image with model ideogram/v4/fast :: a technical poster",
     ),
     {
       prompt: "a technical poster",
       requestedModel: "ideogram/v4/fast",
     },
   );
-  assert.deepEqual(parseImageGenerationCommand("@JJ genera una imagen de lo que quieras"), {
+  assert.deepEqual(parseImageGenerationCommand("@bot genera una imagen de lo que quieras"), {
     prompt: null,
     requestedModel: null,
   });
-  assert.equal(parseImageGenerationCommand("@JJ describe this image"), null);
+  assert.equal(parseImageGenerationCommand("@bot describe this image"), null);
 });
 
 test("authorizes image generation only for configured Discord identities", () => {
@@ -370,7 +370,7 @@ test("compiles every image brief through the configured prompt model and retries
   };
   const promptContext = [
     { role: "system", content: "compile prompts" },
-    { role: "user", content: "@JJ draw a goblin engineer" },
+    { role: "user", content: "@bot draw a goblin engineer" },
   ];
   const config = {
     imagePromptModel: "qwen3.7-flash:thinking",

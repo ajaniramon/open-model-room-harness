@@ -6,6 +6,8 @@ import { CodexRunner } from "./codex-runner.js";
 import { createDiscordBot } from "./discord-bot.js";
 import { NanoGptImageClient } from "./image-generation.js";
 import { JJ_VISUAL_IDENTITY_SYSTEM_SECTION } from "./jj-identity.js";
+import { MemoryDigester } from "./memory-digest.js";
+import { MemoryStore } from "./memory-store.js";
 import { ModelClient } from "./model-client.js";
 import { ParticipationController } from "./participation-policy.js";
 import { JsonlRequestLogger } from "./request-logger.js";
@@ -49,7 +51,27 @@ const runtimeControl = config.runtimeControlEnabled
       restartEnabled: config.runtimeControlRestartEnabled,
     }).load()
   : null;
+const memoryAuditLogger = new JsonlRequestLogger(config.memoryAudit);
+const memoryStore = config.memoryEnabled
+  ? await new MemoryStore({
+      path: config.memoryStorePath,
+      maxRecords: config.memoryMaxRecords,
+      maxPerUser: config.memoryMaxPerUser,
+      retentionDays: config.memoryRetentionDays,
+      maxTextChars: config.memoryMaxTextChars,
+      auditLogger: memoryAuditLogger,
+    }).load()
+  : null;
 const modelClient = new ModelClient(config, fetch, webTools);
+const memoryDigester =
+  memoryStore && config.memoryExtractionEnabled
+    ? new MemoryDigester({
+        store: memoryStore,
+        modelClient,
+        config,
+        runtimeControl,
+      }).start()
+    : null;
 const audioModeState = new AudioModeState(config.audioModeStatePath);
 await audioModeState.load();
 const elevenLabs = new ElevenLabsTtsClient(config);
@@ -72,7 +94,10 @@ const shutdown = async (signal, exitCode = 0) => {
   console.info(`Received ${signal}; disconnecting companion.`);
   client?.destroy();
   await participationController.close();
+  await memoryDigester?.close();
+  await memoryStore?.close();
   await participationAuditLogger.close();
+  await memoryAuditLogger.close();
   await runtimeControl?.close();
   process.exit(exitCode);
 };
@@ -93,6 +118,8 @@ client = createDiscordBot({
   imageClient,
   visionAnalyzer,
   participationController,
+  memoryStore,
+  memoryDigester,
   runtimeControl,
   requestRuntimeRestart,
   systemPrompt,

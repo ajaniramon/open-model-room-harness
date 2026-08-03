@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>JJ memory</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --surface-1: #fcfcfb;
+        --plane: #f9f9f7;
+        --text-primary: #0b0b0b;
+        --text-secondary: #52514e;
+        --muted: #898781;
+        --grid: #e1e0d9;
+        --baseline: #c3c2b7;
+        --border: rgba(11, 11, 11, 0.1);
+        --series-1: #2a78d6;
+        --series-2: #eb6834;
+        --series-3: #1baf7a;
+        --good: #0ca30c;
+        --warning: #fab219;
+        --critical: #d03b3b;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:where(:not([data-theme="light"])) {
+          color-scheme: dark;
+          --surface-1: #1a1a19;
+          --plane: #0d0d0d;
+          --text-primary: #ffffff;
+          --text-secondary: #c3c2b7;
+          --muted: #898781;
+          --grid: #2c2c2a;
+          --baseline: #383835;
+          --border: rgba(255, 255, 255, 0.1);
+          --series-1: #3987e5;
+          --series-2: #d95926;
+          --series-3: #199e70;
+        }
+      }
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+        --surface-1: #1a1a19;
+        --plane: #0d0d0d;
+        --text-primary: #ffffff;
+        --text-secondary: #c3c2b7;
+        --grid: #2c2c2a;
+        --baseline: #383835;
+        --border: rgba(255, 255, 255, 0.1);
+        --series-1: #3987e5;
+        --series-2: #d95926;
+        --series-3: #199e70;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 28px 24px 64px;
+        background: var(--plane);
+        color: var(--text-primary);
+        font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      .wrap { max-width: 1180px; margin: 0 auto; }
+      header { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
+      h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+      .stamp { color: var(--muted); font-size: 12px; }
+      button {
+        font: inherit; padding: 6px 12px; border-radius: 8px; cursor: pointer;
+        border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
+      }
+      button:hover { border-color: var(--baseline); }
+      .grid { display: grid; gap: 16px; }
+      .tiles { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); margin-bottom: 16px; }
+      .charts { grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); margin-bottom: 16px; }
+      .card {
+        background: var(--surface-1); border: 1px solid var(--border);
+        border-radius: 12px; padding: 16px 18px;
+      }
+      .card h2 { font-size: 13px; font-weight: 600; margin: 0 0 2px; color: var(--text-secondary); }
+      .card .sub { font-size: 12px; color: var(--muted); margin: 0 0 14px; }
+      .value { font-size: 30px; line-height: 1.1; margin: 6px 0 2px; }
+      .meter { height: 8px; border-radius: 4px; background: var(--grid); overflow: hidden; margin-top: 10px; }
+      .meter > i { display: block; height: 100%; border-radius: 4px; background: var(--series-1); }
+      .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--text-secondary); margin-top: 12px; }
+      .legend span { display: inline-flex; align-items: center; gap: 6px; }
+      .swatch { width: 10px; height: 10px; border-radius: 3px; }
+      .filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+      input[type="search"], select {
+        font: inherit; padding: 7px 10px; border-radius: 8px; color: var(--text-primary);
+        border: 1px solid var(--border); background: var(--surface-1);
+      }
+      input[type="search"] { min-width: 280px; flex: 1; }
+      table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+      th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+      td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+      .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; border: 1px solid var(--border); color: var(--text-secondary); }
+      .empty { color: var(--muted); padding: 28px 4px; }
+      svg { display: block; overflow: visible; }
+      svg text { fill: var(--muted); font-size: 11px; }
+      svg text.label { fill: var(--text-secondary); }
+      .tip {
+        position: fixed; pointer-events: none; opacity: 0; transition: opacity 90ms;
+        background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
+        padding: 6px 9px; font-size: 12px; color: var(--text-primary);
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.14); z-index: 10; white-space: nowrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>JJ memory</h1>
+        <span class="stamp" id="stamp"></span>
+        <span style="flex: 1"></span>
+        <button id="theme" type="button">Theme</button>
+        <button id="refresh" type="button">Refresh</button>
+      </header>
+
+      <section class="grid tiles" id="tiles"></section>
+      <section class="grid charts">
+        <div class="card">
+          <h2>Notes stored per day</h2>
+          <p class="sub">Last 30 days</p>
+          <div id="chart-days"></div>
+        </div>
+        <div class="card">
+          <h2>Notes per person</h2>
+          <p class="sub">Who JJ knows things about</p>
+          <div id="chart-people"></div>
+        </div>
+      </section>
+      <section class="card" style="margin-bottom: 16px">
+        <h2>Reach</h2>
+        <p class="sub">Where each note may be read</p>
+        <div id="chart-scope"></div>
+      </section>
+
+      <section class="card">
+        <h2>Notes</h2>
+        <p class="sub" id="count"></p>
+        <div class="filters">
+          <input type="search" id="q" placeholder="Search text, keys or person…" />
+          <select id="privacy"><option value="">Any reach</option></select>
+          <select id="origin"><option value="">Any origin</option></select>
+          <select id="subject"><option value="">Anyone</option></select>
+        </div>
+        <div id="table"></div>
+      </section>
+    </div>
+    <div class="tip" id="tip"></div>
+
+    <script type="module">
+      const tip = document.getElementById("tip");
+      const state = { records: [], budget: { maxChars: 40000, perRecordOverhead: 40 } };
+
+      const esc = (value) =>
+        String(value).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+      const day = (iso) => iso.slice(0, 10);
+      const cost = (record) => record.text.length + state.budget.perRecordOverhead;
+
+      function showTip(event, html) {
+        tip.innerHTML = html;
+        tip.style.opacity = "1";
+        tip.style.left = `${Math.min(event.clientX + 14, window.innerWidth - tip.offsetWidth - 12)}px`;
+        tip.style.top = `${event.clientY + 16}px`;
+      }
+      const hideTip = () => (tip.style.opacity = "0");
+
+      // Rounded data-end anchored to the baseline: only the far corners are curved.
+      function vBar(x, y, w, h, r = 4) {
+        const rr = Math.min(r, w / 2, h);
+        return `M${x},${y + h} L${x},${y + rr} Q${x},${y} ${x + rr},${y} L${x + w - rr},${y} Q${x + w},${y} ${x + w},${y + rr} L${x + w},${y + h} Z`;
+      }
+      function hBar(x, y, w, h, r = 4) {
+        const rr = Math.min(r, h / 2, w);
+        return `M${x},${y} L${x + w - rr},${y} Q${x + w},${y} ${x + w},${y + rr} L${x + w},${y + h - rr} Q${x + w},${y + h} ${x + w - rr},${y + h} L${x},${y + h} Z`;
+      }
+
+      function renderTiles() {
+        const total = state.records.length;
+        const people = new Set(state.records.map((r) => r.subjectId)).size;
+        const chars = state.records.reduce((sum, r) => sum + cost(r), 0);
+        const pct = Math.min(100, Math.round((chars / state.budget.maxChars) * 100));
+        const passive = state.records.filter((r) => r.origin === "extraction").length;
+        const meterColor = pct >= 100 ? "var(--critical)" : pct >= 80 ? "var(--warning)" : "var(--series-1)";
+        document.getElementById("tiles").innerHTML = `
+          <div class="card"><h2>Notes stored</h2><p class="value">${total}</p><p class="sub">live records</p></div>
+          <div class="card"><h2>People</h2><p class="value">${people}</p><p class="sub">with at least one note</p></div>
+          <div class="card">
+            <h2>Prompt budget</h2><p class="value">${pct}%</p>
+            <p class="sub">${chars.toLocaleString()} of ${state.budget.maxChars.toLocaleString()} chars</p>
+            <div class="meter"><i style="width:${pct}%;background:${meterColor}"></i></div>
+          </div>
+          <div class="card">
+            <h2>Captured passively</h2><p class="value">${passive}</p>
+            <p class="sub">${total - passive} dictated by command</p>
+          </div>`;
+      }
+
+      function renderDays() {
+        const width = 560, height = 190, padL = 30, padB = 26, padT = 10;
+        const today = new Date();
+        const days = Array.from({ length: 30 }, (_, index) => {
+          const date = new Date(today);
+          date.setDate(today.getDate() - (29 - index));
+          return date.toISOString().slice(0, 10);
+        });
+        const counts = new Map(days.map((d) => [d, 0]));
+        for (const record of state.records) {
+          const key = day(record.createdAt);
+          if (counts.has(key)) counts.set(key, counts.get(key) + 1);
+        }
+        const max = Math.max(1, ...counts.values());
+        const plotH = height - padB - padT;
+        const step = (width - padL) / days.length;
+        const barW = Math.max(3, step - 4);
+        const ticks = [0, Math.ceil(max / 2), max].filter((v, i, a) => a.indexOf(v) === i);
+        const grid = ticks
+          .map((t) => {
+            const y = padT + plotH - (t / max) * plotH;
+            return `<line x1="${padL}" x2="${width}" y1="${y}" y2="${y}" stroke="var(--grid)" stroke-width="1"/><text x="${padL - 8}" y="${y + 4}" text-anchor="end">${t}</text>`;
+          })
+          .join("");
+        const bars = days
+          .map((d, index) => {
+            const value = counts.get(d);
+            if (!value) return "";
+            const h = (value / max) * plotH;
+            const x = padL + index * step + 2;
+            return `<path d="${vBar(x, padT + plotH - h, barW, h)}" fill="var(--series-1)" data-tip="${d}: ${value} note(s)"/>`;
+          })
+          .join("");
+        const labels = [0, 14, 29]
+          .map((index) => `<text x="${padL + index * step + barW / 2}" y="${height - 6}" text-anchor="middle">${days[index].slice(5)}</text>`)
+          .join("");
+        document.getElementById("chart-days").innerHTML =
+          `<svg viewBox="0 0 ${width} ${height}" width="100%" role="img" aria-label="Notes stored per day over the last 30 days">${grid}${bars}<line x1="${padL}" x2="${width}" y1="${padT + plotH}" y2="${padT + plotH}" stroke="var(--baseline)"/>${labels}</svg>`;
+      }
+
+      function renderPeople() {
+        const totals = new Map();
+        for (const record of state.records) {
+          totals.set(record.subject, (totals.get(record.subject) || 0) + 1);
+        }
+        const rows = [...totals].sort((a, b) => b[1] - a[1]).slice(0, 8);
+        if (!rows.length) {
+          document.getElementById("chart-people").innerHTML = '<p class="empty">Nothing stored yet.</p>';
+          return;
+        }
+        const width = 560, rowH = 26, padL = 130;
+        const height = rows.length * rowH + 8;
+        const max = Math.max(...rows.map((r) => r[1]));
+        const bars = rows
+          .map(([name, value], index) => {
+            const y = index * rowH + 4;
+            const w = Math.max(2, (value / max) * (width - padL - 40));
+            return `<text class="label" x="${padL - 10}" y="${y + 13}" text-anchor="end">${esc(name).slice(0, 18)}</text>
+              <path d="${hBar(padL, y, w, 16)}" fill="var(--series-1)" data-tip="${esc(name)}: ${value} note(s)"/>
+              <text x="${padL + w + 8}" y="${y + 13}" class="label">${value}</text>`;
+          })
+          .join("");
+        document.getElementById("chart-people").innerHTML =
+          `<svg viewBox="0 0 ${width} ${height}" width="100%" role="img" aria-label="Notes per person">${bars}</svg>`;
+      }
+
+      const SCOPES = [
+        { key: "guild", label: "Whole server", color: "var(--series-1)" },
+        { key: "room", label: "One channel", color: "var(--series-2)" },
+        { key: "owner", label: "Owner only", color: "var(--series-3)" },
+      ];
+
+      function renderScope() {
+        const total = state.records.length;
+        const node = document.getElementById("chart-scope");
+        if (!total) {
+          node.innerHTML = '<p class="empty">Nothing stored yet.</p>';
+          return;
+        }
+        const width = 900, height = 46, gap = 2;
+        let x = 0;
+        const segments = SCOPES.map((scope) => {
+          const value = state.records.filter((r) => r.privacy === scope.key).length;
+          const w = Math.max(0, (value / total) * width - (value ? gap : 0));
+          const seg = value
+            ? `<rect x="${x}" y="0" width="${w}" height="26" rx="4" fill="${scope.color}" data-tip="${scope.label}: ${value} note(s)"/>
+               ${w > 46 ? `<text class="label" x="${x + 8}" y="${44}">${value}</text>` : ""}`
+            : "";
+          x += value ? w + gap : 0;
+          return seg;
+        }).join("");
+        const legend = SCOPES.map(
+          (scope) =>
+            `<span><i class="swatch" style="background:${scope.color}"></i>${scope.label} — ${state.records.filter((r) => r.privacy === scope.key).length}</span>`,
+        ).join("");
+        node.innerHTML =
+          `<svg viewBox="0 0 ${width} ${height}" width="100%" role="img" aria-label="Notes by reach">${segments}</svg>
+           <div class="legend">${legend}</div>`;
+      }
+
+      function currentFilters() {
+        return {
+          q: document.getElementById("q").value.trim().toLowerCase(),
+          privacy: document.getElementById("privacy").value,
+          origin: document.getElementById("origin").value,
+          subject: document.getElementById("subject").value,
+        };
+      }
+
+      function renderTable() {
+        const { q, privacy, origin, subject } = currentFilters();
+        const rows = state.records
+          .filter((record) => {
+            if (privacy && record.privacy !== privacy) return false;
+            if (origin && record.origin !== origin) return false;
+            if (subject && record.subjectId !== subject) return false;
+            if (!q) return true;
+            const hay = `${record.text} ${record.keys.join(" ")} ${record.subject}`.toLowerCase();
+            return q.split(/\s+/).every((term) => hay.includes(term));
+          })
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        document.getElementById("count").textContent =
+          `${rows.length} of ${state.records.length} shown`;
+        if (!rows.length) {
+          document.getElementById("table").innerHTML = '<p class="empty">No note matches these filters.</p>';
+          return;
+        }
+        document.getElementById("table").innerHTML = `<table>
+          <thead><tr><th>Date</th><th>Person</th><th>Note</th><th>Reach</th><th>Origin</th><th class="num">Sig.</th></tr></thead>
+          <tbody>${rows
+            .map(
+              (record) => `<tr>
+                <td class="num">${day(record.createdAt)}</td>
+                <td>${esc(record.subject)}</td>
+                <td>${esc(record.text)}</td>
+                <td><span class="pill">${SCOPES.find((s) => s.key === record.privacy)?.label || record.privacy}</span></td>
+                <td><span class="pill">${record.origin === "extraction" ? "captured" : "dictated"}</span></td>
+                <td class="num">${record.significance}</td>
+              </tr>`,
+            )
+            .join("")}</tbody></table>`;
+      }
+
+      function fillSelects() {
+        const privacy = document.getElementById("privacy");
+        const origin = document.getElementById("origin");
+        const subject = document.getElementById("subject");
+        privacy.length = 1;
+        origin.length = 1;
+        subject.length = 1;
+        for (const scope of SCOPES) {
+          if (state.records.some((r) => r.privacy === scope.key)) {
+            privacy.add(new Option(scope.label, scope.key));
+          }
+        }
+        for (const value of ["explicit", "extraction"]) {
+          if (state.records.some((r) => r.origin === value)) {
+            origin.add(new Option(value === "extraction" ? "captured" : "dictated", value));
+          }
+        }
+        const people = new Map(state.records.map((r) => [r.subjectId, r.subject]));
+        for (const [id, name] of [...people].sort((a, b) => a[1].localeCompare(b[1]))) {
+          subject.add(new Option(name, id));
+        }
+      }
+
+      function renderAll() {
+        renderTiles();
+        renderDays();
+        renderPeople();
+        renderScope();
+        renderTable();
+      }
+
+      async function load() {
+        const response = await fetch("/api/memories");
+        const payload = await response.json();
+        state.records = payload.records;
+        state.budget = payload.budget;
+        document.getElementById("stamp").textContent =
+          `${payload.records.length} notes · read ${new Date(payload.generatedAt).toLocaleTimeString()}`;
+        fillSelects();
+        renderAll();
+      }
+
+      document.addEventListener("mouseover", (event) => {
+        const tipText = event.target?.dataset?.tip;
+        if (tipText) showTip(event, esc(tipText));
+      });
+      document.addEventListener("mousemove", (event) => {
+        if (event.target?.dataset?.tip) showTip(event, esc(event.target.dataset.tip));
+        else hideTip();
+      });
+      document.getElementById("refresh").addEventListener("click", () => load());
+      document.getElementById("theme").addEventListener("click", () => {
+        const dark = document.documentElement.dataset.theme === "dark";
+        document.documentElement.dataset.theme = dark ? "light" : "dark";
+      });
+      for (const id of ["q", "privacy", "origin", "subject"]) {
+        document.getElementById(id).addEventListener("input", renderTable);
+      }
+      load();
+    </script>
+  </body>
+</html>

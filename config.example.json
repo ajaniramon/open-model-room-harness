@@ -3,6 +3,10 @@
     "owner": {
       "allowedUserIds": [],
       "allowedUsernames": []
+    },
+    "memory": {
+      "allowedUserIds": [],
+      "allowedUsernames": []
     }
   },
   "participation": {
@@ -54,6 +58,38 @@
       "path": "logs/runtime-control.jsonl",
       "maxBytes": 5242880,
       "maxArchives": 5
+    },
+    "memory": {
+      "enabled": true,
+      "path": "logs/memory-events.jsonl",
+      "maxBytes": 5242880,
+      "maxArchives": 5
+    }
+  },
+  "memory": {
+    "enabled": false,
+    "storePath": "state/memory.jsonl",
+    "maxRecords": 5000,
+    "maxPerUser": 300,
+    "retentionDays": 90,
+    "maxTextChars": 300,
+    "injection": {
+      "maxItems": 60,
+      "maxChars": 12000
+    },
+    "extraction": {
+      "enabled": false,
+      "captureMode": "observation",
+      "provider": "",
+      "model": "",
+      "baseUrl": "",
+      "idleMinutes": 10,
+      "minMessages": 4,
+      "maxMessages": 40,
+      "maxTranscriptChars": 8000,
+      "maxFacts": 5,
+      "maxOutputTokens": 800,
+      "checkIntervalSeconds": 60
     }
   }
 }

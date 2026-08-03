@@ -40,6 +40,7 @@ Explore the full multilingual project guide at
 | Participation governor | Global guild budget, conversation windows, progressive user cooldown, and temporary spam blocks |
 | Runtime control | Persistent maintenance mode and optional supervisor-backed restart from Discord |
 | Message timestamps | Every context message carries its post time, age, and time zone |
+| Memory | Opt-in cross-channel notes with per-user opt-out, retention, export and deletion |
 
 The security boundary is enforced in the application, not merely described in a
 prompt. Paid and local tools are exposed only for explicitly authorized turns.
@@ -357,6 +358,80 @@ the system message marks the headers as metadata it must never echo. Set
 `JJ_CONTEXT_TIMESTAMPS=false` to turn the feature off, and `JJ_TIME_ZONE` to any
 IANA name (empty uses the host time zone). The installer asks for the time zone and
 defaults to this machine's.
+
+## Memory
+
+**Disabled by default, and enabling it makes you a data controller for your server.**
+Memory stores content distilled from a shared room, so read this whole section before
+switching `memory.enabled` on.
+
+Two independent switches:
+
+1. `memory.enabled` — the store plus explicit owner commands. Nothing is captured
+   unless somebody types a command.
+2. `memory.extraction.enabled` — passive capture. When a channel has been idle for
+   `idleMinutes`, one bounded model call turns that conversation into at most
+   `maxFacts` short notes. The installer keeps this locked until switch 1 is on.
+
+```text
+@bot remember that we deploy on Fridays    → readable across the server
+@bot remember only here: <text>            → that channel only
+@bot remember privately: <text>            → owner turns only
+@bot what do you remember                  → everything readable here, by person
+@bot what do you remember about me         → only notes about you
+@bot forget <id|words>                     @bot forget everything about me
+@bot export my memory                      @bot memory off | memory on
+@bot digest now                            → force a capture pass
+```
+
+Commands are matched before inference, so storing, listing and deleting never spend
+provider credit. `npm run memory:panel` serves a loopback-only dashboard of everything
+stored, with charts and a searchable table.
+
+At reply time every readable note is injected as a labelled **user-role** block, ordered
+deterministically (speaker first, then people present, then significance and recency) up
+to a character budget. There is no relevance search, so the prompt prefix stays identical
+between turns and remains cacheable. Overflow is left out of that prompt only, never
+deleted, and evictions are logged.
+
+### What participants get
+
+- **Opt-out** with `memory off`. It is honoured everywhere: nothing is stored about them,
+  nothing about them is recalled, and passive capture skips their messages.
+- **Inspection** with `what do you remember about me`, and **export** as a JSON file.
+- **Deletion** of a single note or all of their notes, immediately.
+- **Scoping**: every note is `room`, `guild` or `owner`. Notes never cross servers. The
+  single exception is the owner's own DM, where they can review what the bot picked up in
+  their own guilds.
+
+### What you take on as the operator
+
+- **Tell your members.** A bot that quietly remembers a room is a surprise nobody
+  consented to. Say it has memory, what it keeps, and how to opt out.
+- **Publish a privacy policy.** Discord's Developer Policy requires one, requires you to
+  honour modification and deletion requests, and forbids using message content to train
+  models. This harness trains on nothing, but answering those requests is your job.
+- **Keep retention short.** The default is 90 days. Lower it unless you have a reason.
+- **Consider leaving capture off.** Explicit commands deliver most of the value with no
+  surprises; passive capture reads everyone in the channel.
+
+### Privacy review
+
+- **Storage**: append-only JSONL under `state/`, Git-ignored, self-compacting. Deleting a
+  note drops it from the index and appends a tombstone; the next compaction removes it.
+- **Retention**: enforced on load and on every write, plus a per-user cap that evicts the
+  least significant notes first.
+- **Guild removal**: leaving a server purges every note scoped to it, as the policy
+  requires.
+- **Audit**: every write, deletion, eviction and consent change is recorded in
+  `logs/memory-events.jsonl` **without message bodies**.
+- **Injection surface**: notes are flattened to a single line with brackets neutralised,
+  so a stored note cannot forge an application header; they are delivered as a user turn,
+  never in the system message; they never authorise a tool. Extractor output is
+  schema-validated, and unknown subjects, oversized text, links and anything shaped like
+  an instruction are discarded. Malformed model output stores nothing.
+- **Abstention**: when nothing is stored, the block explicitly tells the model to say it
+  does not remember rather than invent a recollection.
 
 ## Tests
 
