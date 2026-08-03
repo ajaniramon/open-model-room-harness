@@ -101,7 +101,7 @@ test("parses valid facts and rejects everything unsafe", () => {
   assert.equal(facts.length, 1);
   assert.equal(facts[0].subjectId, "1");
   assert.equal(facts[0].privacy, "guild");
-  assert.equal(facts[0].displayName, "Ramon");
+  assert.equal(facts[0].displayName, "Operator");
 });
 
 test("defaults a captured fact to guild reach so it is recalled across channels", () => {
