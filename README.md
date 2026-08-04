@@ -58,6 +58,11 @@ context-isolated Electron bridge, are validated by the main process, and are
 written atomically to `.env` with private file permissions where supported. They
 are never placed in browser storage or URLs.
 
+The installer soundtrack is [Silicon Dreamer by Avizura](https://www.newgrounds.com/audio/listen/1464248),
+included with the artist's permission. The player is opt-in, starts at `00:25` with
+a fade-in, and never autoplays. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+for licensing details.
+
 If no graphical desktop is available, the original terminal wizard remains available:
 
 ```bash

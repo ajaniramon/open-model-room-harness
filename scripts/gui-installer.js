@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, session } from "electron";
+import { app, BrowserWindow, ipcMain, session, shell } from "electron";
 import { mkdtempSync, rmSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,6 +14,7 @@ import {
   validateSetup,
 } from "./setup-core.js";
 import { listProviderModels } from "./model-catalog.js";
+import { isApprovedExternalUrl } from "./external-links.js";
 
 let mainWindow;
 let installing = false;
@@ -73,6 +74,12 @@ ipcMain.handle("installer:install", async (_event, input) => {
 ipcMain.handle("installer:list-models", async (_event, input) => {
   if (!input || typeof input !== "object") throw new Error("Invalid model catalog request.");
   return listProviderModels(input.provider, input.apiKey, { baseUrl: input.baseUrl });
+});
+
+ipcMain.handle("installer:open-external", async (_event, url) => {
+  if (!isApprovedExternalUrl(url)) throw new Error("External URL is not approved.");
+  await shell.openExternal(url);
+  return true;
 });
 
 ipcMain.on("window:minimize", () => mainWindow?.minimize());

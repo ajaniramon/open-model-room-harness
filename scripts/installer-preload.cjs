@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld("installer", {
   listModels: (provider, apiKey, baseUrl) =>
     ipcRenderer.invoke("installer:list-models", { provider, apiKey, baseUrl }),
   install: (configuration) => ipcRenderer.invoke("installer:install", configuration),
+  openExternal: (url) => ipcRenderer.invoke("installer:open-external", url),
   onProgress: (listener) => {
     const handler = (_event, payload) => listener(payload);
     ipcRenderer.on("installer:progress", handler);

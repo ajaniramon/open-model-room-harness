@@ -17,6 +17,7 @@ const ignoredDirectories = new Set([
 const forbiddenNames = new Set([".env", "system-prompt.txt"]);
 const forbiddenMedia = new Set([".gif", ".jpeg", ".jpg", ".mp3", ".png", ".webp"]);
 const allowedPublicMedia = new Set([
+  "silicon-dreamer.mp3",
   "site/public/luca.png",
   "site/public/og.png",
   "site/public/open-model-room-mark.png",

@@ -11,6 +11,213 @@ const stageLabel = document.querySelector("#progress-label");
 let definitions = {};
 let modelLoadTimer;
 let modelRequestSequence = 0;
+const TRACK_CUE_SECONDS = 25;
+const TRACK_VOLUME = 0.58;
+const TRACK_FADE_MS = 2_200;
+
+function formatTrackTime(seconds) {
+  const safe = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
+  return `${String(Math.floor(safe / 60)).padStart(2, "0")}:${String(safe % 60).padStart(2, "0")}`;
+}
+
+function initKeygenBanner() {
+  const banner = document.querySelector(".keygen-banner");
+  const canvas = document.querySelector("#keygen-canvas");
+  const context = canvas.getContext("2d", { alpha: false });
+  const audio = document.querySelector("#soundtrack");
+  const toggle = document.querySelector("#soundtrack-toggle");
+  const action = document.querySelector("#soundtrack-action");
+  const state = document.querySelector("#soundtrack-state");
+  const clock = document.querySelector("#soundtrack-time");
+  const credit = document.querySelector("#soundtrack-credit");
+  const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let started = false;
+  let fadeFrame = 0;
+  let analyser = null;
+  let spectrum = null;
+  let audioContext = null;
+  let source = null;
+
+  let seed = 0x4f4d52;
+  const random = () => {
+    seed = (seed * 1_664_525 + 1_013_904_223) >>> 0;
+    return seed / 0x1_0000_0000;
+  };
+  const stars = Array.from({ length: 74 }, () => ({
+    x: random(),
+    y: random() * 0.72,
+    size: 0.35 + random() * 1.45,
+    speed: 0.006 + random() * 0.018,
+    phase: random() * Math.PI * 2,
+  }));
+
+  function resizeCanvas() {
+    const bounds = canvas.getBoundingClientRect();
+    const scale = Math.min(devicePixelRatio || 1, 2);
+    canvas.width = Math.max(1, Math.round(bounds.width * scale));
+    canvas.height = Math.max(1, Math.round(bounds.height * scale));
+    context.setTransform(scale, 0, 0, scale, 0, 0);
+  }
+
+  function draw(timestamp = 0) {
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    const time = timestamp * 0.001;
+    const horizon = height * 0.5;
+    const gradient = context.createLinearGradient(0, 0, width, height);
+    gradient.addColorStop(0, "#02050a");
+    gradient.addColorStop(0.5, "#081425");
+    gradient.addColorStop(1, "#08030e");
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, width, height);
+
+    context.save();
+    context.globalCompositeOperation = "screen";
+    for (const star of stars) {
+      const x = ((star.x + time * star.speed) % 1) * width;
+      const pulse = 0.35 + Math.sin(time * 2.2 + star.phase) * 0.18;
+      context.fillStyle = `rgba(157,236,255,${pulse})`;
+      context.fillRect(x, star.y * height, star.size, star.size);
+    }
+
+    context.lineWidth = 0.65;
+    for (let line = -16; line <= 16; line += 1) {
+      const center = width * 0.54;
+      context.strokeStyle = line % 4 === 0 ? "#e052c455" : "#52dce833";
+      context.beginPath();
+      context.moveTo(center + line * 7, horizon);
+      context.lineTo(center + line * 76, height + 8);
+      context.stroke();
+    }
+    for (let line = 0; line < 13; line += 1) {
+      const phase = (line / 13 + time * 0.12) % 1;
+      const y = horizon + phase * phase * (height - horizon + 10);
+      context.strokeStyle = line % 3 === 0 ? "#e052c455" : "#52dce83d";
+      context.beginPath();
+      context.moveTo(0, y);
+      context.lineTo(width, y);
+      context.stroke();
+    }
+
+    if (analyser && spectrum) analyser.getByteFrequencyData(spectrum);
+    const bars = 42;
+    const barWidth = Math.max(2, width / bars - 3);
+    for (let index = 0; index < bars; index += 1) {
+      const signal = spectrum
+        ? spectrum[Math.floor((index / bars) * spectrum.length)] / 255
+        : 0.12 + (Math.sin(time * 2.4 + index * 0.72) + 1) * 0.045;
+      const barHeight = 2 + signal * 27;
+      context.fillStyle = index % 3 === 0 ? "#f05aca42" : "#5ce6ee3a";
+      context.fillRect(index * (width / bars), horizon - barHeight, barWidth, barHeight);
+    }
+    context.restore();
+
+    if (!reducedMotion) requestAnimationFrame(draw);
+  }
+
+  async function prepareAnalyser() {
+    if (!audioContext) {
+      audioContext = new AudioContext();
+      analyser = audioContext.createAnalyser();
+      analyser.fftSize = 128;
+      analyser.smoothingTimeConstant = 0.78;
+      spectrum = new Uint8Array(analyser.frequencyBinCount);
+      source = audioContext.createMediaElementSource(audio);
+      source.connect(analyser);
+      analyser.connect(audioContext.destination);
+    }
+    if (audioContext.state === "suspended") await audioContext.resume();
+  }
+
+  function cancelFade() {
+    if (fadeFrame) cancelAnimationFrame(fadeFrame);
+    fadeFrame = 0;
+  }
+
+  function fadeIn() {
+    cancelFade();
+    audio.volume = 0;
+    const beganAt = performance.now();
+    const step = (now) => {
+      const progress = Math.min(1, (now - beganAt) / TRACK_FADE_MS);
+      audio.volume = TRACK_VOLUME * (1 - Math.cos(progress * Math.PI)) / 2;
+      if (progress < 1 && !audio.paused) fadeFrame = requestAnimationFrame(step);
+      else fadeFrame = 0;
+    };
+    fadeFrame = requestAnimationFrame(step);
+  }
+
+  function updateClock() {
+    const duration = Number.isFinite(audio.duration) ? audio.duration : 235;
+    const current = started ? audio.currentTime : TRACK_CUE_SECONDS;
+    clock.textContent = `${formatTrackTime(current)} / ${formatTrackTime(duration)}`;
+  }
+
+  async function playFromCurrentPosition() {
+    await prepareAnalyser();
+    if (!started || audio.ended || audio.currentTime < TRACK_CUE_SECONDS) {
+      audio.currentTime = TRACK_CUE_SECONDS;
+    }
+    await audio.play();
+    started = true;
+    fadeIn();
+  }
+
+  toggle.addEventListener("click", async () => {
+    try {
+      if (audio.paused) await playFromCurrentPosition();
+      else audio.pause();
+    } catch (error) {
+      state.textContent = "AUDIO FAULT";
+      addLog("AUDIO", error.message || "Playback failed.", "ERR");
+    }
+  });
+  credit.addEventListener("click", async () => {
+    try {
+      await window.installer.openExternal(credit.dataset.url);
+    } catch (error) {
+      addLog("LINK", error.message || "Could not open the track page.", "ERR");
+    }
+  });
+  audio.addEventListener("play", () => {
+    banner.classList.add("playing");
+    toggle.setAttribute("aria-pressed", "true");
+    toggle.setAttribute("aria-label", "Pause Silicon Dreamer");
+    action.textContent = "PAUSE.MOD";
+    state.textContent = "PLAYING";
+  });
+  audio.addEventListener("pause", () => {
+    cancelFade();
+    banner.classList.remove("playing");
+    toggle.setAttribute("aria-pressed", "false");
+    toggle.setAttribute("aria-label", "Play Silicon Dreamer");
+    action.textContent = "PLAY.MOD";
+    if (!audio.ended) state.textContent = started ? "PAUSED" : "CUE 00:25";
+  });
+  audio.addEventListener("loadedmetadata", () => {
+    if (!started) audio.currentTime = Math.min(TRACK_CUE_SECONDS, audio.duration || TRACK_CUE_SECONDS);
+    updateClock();
+  });
+  audio.addEventListener("timeupdate", updateClock);
+  audio.addEventListener("ended", async () => {
+    state.textContent = "RELOADING";
+    audio.currentTime = TRACK_CUE_SECONDS;
+    try {
+      await playFromCurrentPosition();
+    } catch (error) {
+      state.textContent = "AUDIO FAULT";
+      addLog("AUDIO", error.message || "Loop playback failed.", "ERR");
+    }
+  });
+  audio.addEventListener("error", () => {
+    state.textContent = "FILE MISSING";
+  });
+
+  new ResizeObserver(resizeCanvas).observe(banner);
+  resizeCanvas();
+  draw();
+  updateClock();
+}
 
 function addLog(stage, message, state = "RUN") {
   const line = document.createElement("p");
@@ -199,6 +406,7 @@ ownerHelpDialog.addEventListener("click", (event) => {
   if (event.target === ownerHelpDialog) ownerHelpDialog.close();
 });
 
+initKeygenBanner();
 boot().catch((error) => {
   document.querySelector("#system-status").textContent = "DESKTOP BRiDGE FAULT";
   errorBox.textContent = error.message;
