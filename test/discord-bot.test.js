@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { ChannelType } from "discord.js";
 import {
+  allowsXPostPrefetch,
   buildMessageHeader,
   isBlockedAuthor,
   isAudioModeAuthorized,
@@ -153,6 +155,39 @@ test("requires an explicit web action before exposing tools", () => {
   assert.equal(requestsWebTools("@bot tweet me a joke"), false);
   assert.equal(requestsWebTools("@bot qué opinas de este enlace https://example.com"), false);
   assert.equal(requestsWebTools("@bot cuéntame un chiste"), false);
+});
+
+// A bare X link is handled by the prefetch stage, so it must not silently widen the
+// gate that also exposes generic web_search and web_fetch.
+test("a bare X post link does not open the web tool gate", () => {
+  assert.equal(requestsWebTools("@bot https://x.com/jack/status/20"), false);
+  assert.equal(requestsWebTools("look at this https://fxtwitter.com/jack/status/456"), false);
+  assert.equal(requestsWebTools("@bot show https://x.com/jack/status/20"), true);
+  // A host that merely contains an allowed name must not satisfy the X branch. An
+  // explicit web action still opens the gate for any URL, which is a separate branch.
+  assert.equal(requestsWebTools("@bot show https://fox.com/news/status/2020"), false);
+  assert.equal(requestsWebTools("@bot fetch https://fox.com/news/status/2020"), true);
+});
+
+test("prefetches X posts for anyone in a channel but only for the owner in DMs", () => {
+  const config = {
+    xPrefetchEnabled: true,
+    ownerUserIds: new Set(["1"]),
+    ownerUsernames: new Set(["owner"]),
+  };
+  const guildMessage = (author) => ({ channel: { type: ChannelType.GuildText }, author });
+  const dm = (author) => ({ channel: { type: ChannelType.DM }, author });
+
+  assert.equal(allowsXPostPrefetch(guildMessage({ id: "9", username: "stranger" }), config), true);
+  assert.equal(allowsXPostPrefetch(dm({ id: "1", username: "owner" }), config), true);
+  assert.equal(allowsXPostPrefetch(dm({ id: "9", username: "stranger" }), config), false);
+  assert.equal(
+    allowsXPostPrefetch(guildMessage({ id: "9", username: "stranger" }), {
+      ...config,
+      xPrefetchEnabled: false,
+    }),
+    false,
+  );
 });
 
 test("parses supported escalation command forms", () => {

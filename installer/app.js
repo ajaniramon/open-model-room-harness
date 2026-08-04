@@ -370,6 +370,7 @@ form.addEventListener("submit", async (event) => {
   data.runtimeRestartEnabled = form.elements.runtimeRestartEnabled.checked;
   data.enableMemory = form.elements.enableMemory.checked;
   data.enableMemoryCapture = form.elements.enableMemoryCapture.checked;
+  data.enableXPrefetch = form.elements.enableXPrefetch.checked;
   data.runTests = form.elements.runTests.checked;
   data.autobanEnabled = form.elements.autobanEnabled.checked;
   data.replaceExisting = form.elements.replaceExisting?.checked || false;

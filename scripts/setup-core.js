@@ -130,6 +130,8 @@ export function validateSetup(input) {
     timeZone: resolveTimeZone(clean(input.timeZone, 100)),
     enableMemory: input.enableMemory === true,
     enableMemoryCapture: input.enableMemory === true && input.enableMemoryCapture === true,
+    // On by default: it only reads posts a participant already linked in the room.
+    enableXPrefetch: input.enableXPrefetch !== false,
     participation,
     runtimeRestartEnabled,
     visualIdentity:
@@ -202,6 +204,11 @@ export function buildConfigJson(config) {
         allowedUsernames:
           config.enableMemory && config.ownerUsername ? [config.ownerUsername.toLowerCase()] : [],
       },
+    },
+    xPrefetch: {
+      enabled: config.enableXPrefetch,
+      maxPosts: 2,
+      maxChars: 1_200,
     },
     memory: {
       enabled: config.enableMemory,

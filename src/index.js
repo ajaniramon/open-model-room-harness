@@ -14,7 +14,7 @@ import { JsonlRequestLogger } from "./request-logger.js";
 import { RuntimeControl } from "./runtime-control.js";
 import { VisionAnalyzer } from "./vision.js";
 import { TavilyClient, WebToolRuntime } from "./web-tools.js";
-import { FxTwitterClient, KeylessXDiscovery } from "./x-tools.js";
+import { FxTwitterClient, KeylessXDiscovery, XPostPrefetcher } from "./x-tools.js";
 
 const promptUrl = new URL("./system-prompt.txt", import.meta.url);
 const requiredConfiguration = [["DISCORD_TOKEN", config.discordToken]];
@@ -32,10 +32,19 @@ const systemPrompt =
   `${(await readFile(fileURLToPath(promptUrl), "utf8")).trim()}\n\n` +
   JJ_VISUAL_IDENTITY_SYSTEM_SECTION;
 const xDiscovery = new KeylessXDiscovery();
-const webTools = new WebToolRuntime(
-  new TavilyClient(config.tavilyApiKey),
-  new FxTwitterClient(fetch, undefined, xDiscovery.searchPostUrls.bind(xDiscovery)),
+const fxTwitter = new FxTwitterClient(
+  fetch,
+  undefined,
+  xDiscovery.searchPostUrls.bind(xDiscovery),
 );
+const webTools = new WebToolRuntime(new TavilyClient(config.tavilyApiKey), fxTwitter);
+const xPostPrefetcher = config.xPrefetchEnabled
+  ? new XPostPrefetcher({
+      client: fxTwitter,
+      maxPosts: config.xPrefetchMaxPosts,
+      maxChars: config.xPrefetchMaxChars,
+    })
+  : null;
 const participationAuditLogger = new JsonlRequestLogger(config.participationAudit);
 const participationController = await new ParticipationController({
   policy: config.participationPolicy,
@@ -117,6 +126,7 @@ client = createDiscordBot({
   elevenLabs,
   imageClient,
   visionAnalyzer,
+  xPostPrefetcher,
   participationController,
   memoryStore,
   memoryDigester,

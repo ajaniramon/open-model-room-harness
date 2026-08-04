@@ -266,6 +266,10 @@ const enableMemoryCapture = enableMemory
       false,
     )
   : false;
+const enableXPrefetch = await confirm(
+  "Download X/Twitter posts linked in chat so the bot can comment on them (owner-only in DMs)",
+  true,
+);
 const installCodex = await confirm(
   "Install the optional Codex CLI for local delegated tasks",
   false,
@@ -349,6 +353,11 @@ await writeFile(
         maxDurationMinutes: 360,
       },
       statePath: "state/participation-state.json",
+    },
+    xPrefetch: {
+      enabled: enableXPrefetch,
+      maxPosts: 2,
+      maxChars: 1_200,
     },
     runtimeControl: {
       enabled: true,

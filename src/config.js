@@ -370,6 +370,15 @@ export const config = Object.freeze({
     min: 128,
     max: 8_192,
   }),
+  xPrefetchEnabled: configuredBoolean("xPrefetch.enabled", "JJ_X_PREFETCH_ENABLED", true),
+  xPrefetchMaxPosts: configuredInteger("xPrefetch.maxPosts", "JJ_X_PREFETCH_MAX_POSTS", 2, {
+    min: 1,
+    max: 5,
+  }),
+  xPrefetchMaxChars: configuredInteger("xPrefetch.maxChars", "JJ_X_PREFETCH_MAX_CHARS", 1_200, {
+    min: 200,
+    max: 10_000,
+  }),
   codexAllowedUserIds: new Set(
     (process.env.JJ_CODEX_ALLOWED_USER_IDS || "")
       .split(",")

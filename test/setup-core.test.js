@@ -111,6 +111,16 @@ test("memory ships disabled and only turns on when the operator asks", () => {
   assert.deepEqual(json.permissions.memory.allowedUserIds, ["123456789012345678"]);
 });
 
+test("X link prefetch ships enabled and can be turned off at install time", () => {
+  const on = JSON.parse(buildConfigJson(validateSetup(valid())));
+  assert.equal(on.xPrefetch.enabled, true);
+  assert.equal(on.xPrefetch.maxPosts, 2);
+
+  const off = validateSetup(valid({ enableXPrefetch: false }));
+  assert.equal(off.enableXPrefetch, false);
+  assert.equal(JSON.parse(buildConfigJson(off)).xPrefetch.enabled, false);
+});
+
 test("passive capture cannot be enabled without memory itself", () => {
   const config = validateSetup(valid({ enableMemoryCapture: true }));
   assert.equal(config.enableMemory, false);

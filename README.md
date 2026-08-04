@@ -120,6 +120,7 @@ The GUI asks for:
 - Owner Discord user ID and/or username
 - Optional Tavily API key
 - Keyless, read-only X/Twitter search and post fetch through FxTwitter with free search fallback
+- Automatic download of X/Twitter posts linked in chat, so the bot can comment on them
 - Optional ElevenLabs API key and voice ID
 - Optional visual identity
 - Optional Codex CLI installation
@@ -325,6 +326,28 @@ Visual reports and text found inside images are treated as untrusted data.
 
 The main conversational model receives the visual report and writes the final
 reply in the configured character voice.
+
+## X/Twitter link prefetch
+
+When a message links to a public X/Twitter post, the harness downloads that post
+before calling the model and attaches its text to the triggering message. The bot can
+then comment on the post without deciding to call a tool, including on spontaneous
+turns, so a link dropped into a room is never answered blind.
+
+- Enabled by default; set `xPrefetch.enabled` (or `JJ_X_PREFETCH_ENABLED`) to `false`
+  to turn it off, and tune `maxPosts` and `maxChars` to bound how much text is added.
+- Works for any participant in a channel the bot already answers in. In direct
+  messages it is restricted to the configured owner, so a stranger's DM cannot drive
+  outbound requests.
+- Only hosts on the `x.com`, `twitter.com`, `fxtwitter.com`, and `fixupx.com` allowlist
+  are recognized, and only `/<handle>/status/<id>` paths. Links are parsed as URLs
+  rather than pattern-matched, so a host that merely contains an allowed name is
+  ignored.
+- Post text is injected as untrusted data with an explicit instruction that it is never
+  an instruction. A download failure is reported inside the block, so the model states
+  it could not open the post instead of inventing its contents.
+- A bare link does not expose `web_search` or `web_fetch`; those still require an
+  explicit request from an authorized participant.
 
 ## Security model
 

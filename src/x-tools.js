@@ -45,27 +45,63 @@ export const X_FETCH_TOOL = Object.freeze({
   },
 });
 
+const X_POST_HOSTS = Object.freeze(
+  new Set([
+    "x.com",
+    "www.x.com",
+    "twitter.com",
+    "www.twitter.com",
+    "fxtwitter.com",
+    "www.fxtwitter.com",
+    "fixupx.com",
+    "www.fixupx.com",
+  ]),
+);
+
+// Only used to skip obvious non-candidates cheaply. The host allowlist below is the
+// actual check, because a substring match would accept hosts like "notx.com".
+const X_POST_CANDIDATE =
+  /^(?:https?:\/\/)?(?:[a-z0-9-]+\.)*(?:x|twitter|fxtwitter|fixupx)\.com\//i;
+
 function postId(value) {
   if (typeof value !== "string") return "";
   const input = value.trim();
   if (/^\d{2,20}$/.test(input)) return input;
   try {
     const url = new URL(input);
-    const allowedHosts = new Set([
-      "x.com",
-      "www.x.com",
-      "twitter.com",
-      "www.twitter.com",
-      "fxtwitter.com",
-      "www.fxtwitter.com",
-      "fixupx.com",
-      "www.fixupx.com",
-    ]);
-    if (!allowedHosts.has(url.hostname.toLowerCase())) return "";
+    if (!X_POST_HOSTS.has(url.hostname.toLowerCase())) return "";
     return url.pathname.match(/\/status\/(\d{2,20})(?:\/|$)/)?.[1] || "";
   } catch {
     return "";
   }
+}
+
+// Discord suppresses embeds with <angle brackets> and people glue links to
+// punctuation, so candidates are split and trimmed before being parsed as URLs
+// instead of being pattern-matched inside the raw message text.
+export function extractXPostUrls(content, maxUrls = 2) {
+  const limit = Math.max(1, Math.min(Number(maxUrls) || 1, 5));
+  const urls = [];
+  const seen = new Set();
+  for (const token of String(content || "").split(/[\s<>"'`]+/)) {
+    if (!token) continue;
+    const candidate = token.replace(/^[([{]+/, "").replace(/[),.;:!?\]}]+$/, "");
+    if (!X_POST_CANDIDATE.test(candidate)) continue;
+    let url;
+    try {
+      url = new URL(/^https?:\/\//i.test(candidate) ? candidate : `https://${candidate}`);
+    } catch {
+      continue;
+    }
+    if (!X_POST_HOSTS.has(url.hostname.toLowerCase())) continue;
+    const match = url.pathname.match(/^\/([A-Za-z0-9_]{1,20})\/status\/(\d{2,20})(?:\/|$)/);
+    if (!match) continue;
+    if (seen.has(match[2])) continue;
+    seen.add(match[2]);
+    urls.push(`https://x.com/${match[1]}/status/${match[2]}`);
+    if (urls.length >= limit) break;
+  }
+  return urls;
 }
 
 function decodeHtmlAttribute(value) {
@@ -342,5 +378,41 @@ export class FxTwitterClient {
     if (result.error) return result.error;
     if (!result.data.status) return "ERROR: FxTwitter returned no post.";
     return formatPost(result.data.status);
+  }
+}
+
+// Downloads X posts that a message links to, without waiting for the model to decide
+// to call a tool. Failures are reported inside the block so the model can say the post
+// was unavailable instead of inventing its contents.
+export class XPostPrefetcher {
+  constructor({ client, maxPosts = 2, maxChars = 1_200 } = {}) {
+    this.client = client;
+    this.maxPosts = Math.max(1, Math.min(Number(maxPosts) || 1, 5));
+    this.maxChars = Math.max(200, Math.min(Number(maxChars) || 1_200, 10_000));
+  }
+
+  async describe(content) {
+    if (!this.client) return null;
+    const urls = extractXPostUrls(content, this.maxPosts);
+    if (!urls.length) return null;
+    const posts = await Promise.all(
+      urls.map(async (url) => {
+        let result;
+        try {
+          result = await this.client.fetchPost(url);
+        } catch (error) {
+          result = `ERROR: ${error?.name || "Error"}: ${error?.message || error}`;
+        }
+        if (typeof result !== "string" || result.startsWith("ERROR:")) {
+          const detail = oneLine(String(result || "").replace(/^ERROR:\s*/, ""), 200);
+          return `${url}\n(not downloaded: ${detail || "unknown failure"})`;
+        }
+        return result;
+      }),
+    );
+    const block = posts.join("\n\n");
+    return block.length > this.maxChars
+      ? `${block.slice(0, this.maxChars)}\n… (X post text truncated)`
+      : block;
   }
 }

@@ -66,6 +66,11 @@
       "maxArchives": 5
     }
   },
+  "xPrefetch": {
+    "enabled": true,
+    "maxPosts": 2,
+    "maxChars": 1200
+  },
   "memory": {
     "enabled": false,
     "storePath": "state/memory.jsonl",
