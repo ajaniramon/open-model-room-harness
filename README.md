@@ -8,7 +8,7 @@
 [![CI](https://github.com/ajaniramon/open-model-room-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/ajaniramon/open-model-room-harness/actions/workflows/ci.yml)
 [![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A520.11-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![discord.js](https://img.shields.io/badge/discord.js-14-5865F2?logo=discord&logoColor=white)](https://discord.js.org/)
-[![Providers](https://img.shields.io/badge/Providers-6-7C3AED)](#model-providers)
+[![Providers](https://img.shields.io/badge/Providers-7-7C3AED)](#model-providers)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Text, vision, image generation, ElevenLabs audio replies, guarded web tools,
@@ -28,7 +28,7 @@ Explore the full multilingual project guide at
 
 | Capability | Implementation |
 | --- | --- |
-| Conversational model | Selectable NanoGPT, OpenAI, Anthropic, xAI, Gemini, or local OpenAI-compatible provider |
+| Conversational model | Selectable NanoGPT, OpenAI, Anthropic, xAI, Gemini, local OpenAI-compatible, or provider-free connectivity mode |
 | Vision | Qwen multimodal sidecar, summarized back to the main model |
 | Image generation | GPT Image 2 by default, with live NanoGPT model selection |
 | Prompt expansion | Every image brief is expanded and validated before generation |
@@ -140,6 +140,7 @@ with `MODEL_PROVIDER`.
 | [xAI / Grok](https://docs.x.ai/developers/quickstart) | `grok-4.5` | `XAI_API_KEY` |
 | [Google Gemini](https://ai.google.dev/gemini-api/docs/quickstart) | `gemini-3.6-flash` | `GEMINI_API_KEY` |
 | Local OpenAI-compatible | `local-model` | Optional `LOCAL_API_KEY` |
+| None / connectivity test | `none` | None |
 
 Each provider uses its native authentication and message/tool format. Tool calls
 are normalized inside the harness, including Anthropic tool-result blocks and
@@ -151,6 +152,11 @@ ID, and `LOCAL_BASE_URL` to the server address. The URL may be a bare host, an
 OpenAI-compatible `/v1` base, or the complete `/v1/chat/completions` URL; the
 harness normalizes all three forms. `LOCAL_API_KEY` is optional and is sent as a
 Bearer token only when present.
+
+For Discord and MCP integration testing without a model account, set
+`MODEL_PROVIDER=none`. The bot still logs in, accepts deterministic owner
+commands, exposes MCP controls, and replies to inference-bound turns with a short
+provider-disabled message.
 
 Typical defaults:
 
@@ -234,6 +240,26 @@ Web and X/Twitter research, image generation, escalation, audio mode, and Codex 
 Audio mode sends MP3 replies only when the configured owner directly addresses the
 bot; other participants continue receiving text.
 
+Discord-only custom emoji strings can be supplied as runtime metadata instead of
+memory:
+
+```dotenv
+DISCORD_EMOJI_PALETTE="<:name:123456789012345678>,<a:animated:234567890123456789>"
+```
+
+or:
+
+```json
+{
+  "discord": {
+    "emojiPalette": ["<:name:123456789012345678>", "<a:animated:234567890123456789>"]
+  }
+}
+```
+
+The palette is injected only into Discord reply context, never stored as memory.
+Audio mode omits it because spoken replies forbid emojis.
+
 `CODEX YOLO :: <task>` is an opt-in owner-only route for work across a broader
 local root. It is disabled by default. To use it, set `JJ_CODEX_YOLO_ENABLED=true`
 and point `JJ_CODEX_YOLO_WORKSPACE` at a directory whose contents Codex may
@@ -270,6 +296,153 @@ restart:
 The desktop and CLI installers create a private, Git-ignored `config.json` from
 `config.example.json`. Hot changes are validated and written there atomically;
 environment variables documented in `.env.example` remain deployment fallbacks.
+
+## Behavior modes
+
+Behavior modes are an optional, generic runtime policy layer. They are disabled by
+default, so existing deployments keep the current participation behavior until
+`BEHAVIOR_MODE_ENABLED=true` or `behaviorMode.enabled` is set.
+
+The four modes are:
+
+| Mode | Behavior |
+| --- | --- |
+| `manual` | Normal configured reply behavior; spontaneous participation is off while behavior modes are enabled. |
+| `observe` | Silent for non-owner users, but passive memory capture can run when extraction is enabled. |
+| `auto` | Event-driven spontaneous participation is allowed, still bounded by participation limits and auto cooldowns. |
+| `quiet` | Silent for non-owner users and passive capture is paused. |
+
+Modes can be global, guild-scoped, or channel-scoped. Channel overrides win over
+guild overrides, which win over the global/default mode. Overrides may include an
+expiry, a per-scope auto cooldown, and a maximum number of auto replies per hour.
+
+An optional MCP control server can expose only the behavior switches, not raw
+Discord send/read tools:
+
+```dotenv
+BEHAVIOR_MODE_ENABLED=true
+MCP_CONTROL_ENABLED=true
+MCP_CONTROL_BEARER_TOKEN=replace-with-a-private-token
+```
+
+The server listens on `http://127.0.0.1:3000/sse` by default and requires
+`Authorization: Bearer <token>` on every request. To test from a remote MCP
+client, put the local endpoint behind a trusted tunnel or deployment boundary and
+keep the bearer token private.
+
+The MCP control surface includes generic behavior, participation, runtime, memory,
+and audio tools:
+
+```text
+discover_mcp_tools
+describe_mcp_tool
+get_mcp_usage_guide
+get_discord_connection_status
+list_discord_guilds
+list_discord_channels
+resolve_discord_members
+search_discord_members
+send_owner_dm
+list_discord_scopes
+set_discord_scope
+clear_discord_scope
+send_scoped_discord_message
+get_behavior_mode
+set_behavior_mode
+clear_behavior_mode
+list_behavior_modes
+get_runtime_status
+get_capability_status
+set_maintenance_mode
+set_observation_mode
+restart_runtime
+get_participation_status
+get_participation_policy
+set_participation_policy
+reset_participation_policy
+unban_participant
+get_memory_status
+run_memory_digest
+get_audio_mode
+set_audio_mode
+get_pending_chat_relay
+get_chat_relay_item
+submit_chat_relay_reply
+dismiss_chat_relay_item
+```
+
+If the MCP client UI cannot send a bearer header, put the same token in the server
+URL for the SSE handshake:
+
+```text
+https://example-tunnel/sse?access_token=<token>
+```
+
+The server authorizes the resulting SSE session and still rejects unknown tokens.
+If the client strips query parameters, use the token-in-path form instead:
+
+```text
+https://example-tunnel/token/<token>/sse
+```
+
+For a control-only test, create `.env.control` with the MCP and behavior-mode
+settings, then run the MCP switchboard without Discord, a model API key, or a
+system prompt:
+
+```bash
+npm run mcp:control
+```
+
+This edits the behavior-mode state file. A separate running bot process using the
+same `BEHAVIOR_MODE_STATE_PATH` watches that file and hot-reloads changes, so MCP
+control and the Discord runtime can run as separate processes.
+
+When `MODEL_PROVIDER=none`, a ChatGPT-mediated relay can queue model-bound Discord
+turns instead of posting the provider-disabled test message:
+
+```dotenv
+CHAT_RELAY_ENABLED=true
+CHAT_RELAY_TTL_SECONDS=600
+CHAT_RELAY_MAX_ITEMS=50
+```
+
+The harness still owns Discord events, scope checks, cooldowns, and participation
+reservations. ChatGPT can inspect queued items with `get_pending_chat_relay` /
+`get_chat_relay_item`, then answer only that queued event through
+`submit_chat_relay_reply`. This is not a raw Discord send tool.
+
+Relay items include both stable IDs and human-readable context such as
+`guildName`, `channelName`, `scope`, and `isDM` so external chat providers can
+reason about where a turn came from without an extra discovery call.
+
+`send_owner_dm` is restricted to configured immutable owner user IDs. It writes a
+metadata-only audit event with the target owner ID, status, and message length;
+the DM body is not retained in the audit log.
+
+Scoped Discord sends use named scopes stored in `config.json`, not arbitrary
+channel IDs. A minimal scope looks like:
+
+```json
+{
+  "discord": {
+    "scopes": {
+      "publicChat": {
+        "label": "Public Chat",
+        "guildIds": ["1400728771245637683"],
+        "channelIds": ["1461460040660811968"],
+        "defaultChannelId": "1461460040660811968",
+        "allowSend": true,
+        "attentionMode": "mentions_only",
+        "includeRepliesToSelf": true
+      }
+    }
+  }
+}
+```
+
+`send_scoped_discord_message` can post only to channels inside an `allowSend`
+scope, only when the bot has Discord send permission there, and with Discord
+mention parsing disabled.
 
 ## Remote runtime control
 

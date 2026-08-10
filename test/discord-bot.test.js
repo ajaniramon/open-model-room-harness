@@ -12,6 +12,8 @@ import {
   isWebAuthorized,
   compactCodexHandoff,
   compileImagePrompt,
+  buildContext,
+  formatDiscordEmojiPalette,
   limitCodexDiscordResponse,
   normalizeCompiledImagePrompt,
   parseAudioModeCommand,
@@ -96,6 +98,47 @@ test("stamps context headers with the post time and its age", () => {
     header,
     "[Discord message from Operator at 2026-08-01 13:48:00 Europe/Madrid (12m ago)]",
   );
+});
+
+test("formats a Discord-only emoji palette without treating it as memory", async () => {
+  const instruction = formatDiscordEmojiPalette([
+    "<:spark:123456789012345678>",
+    "<a:dance:234567890123456789>",
+  ]);
+  assert.match(instruction, /custom emoji strings/);
+  assert.match(instruction, /<:spark:123456789012345678>/);
+  assert.match(instruction, /outside Discord/);
+  assert.doesNotMatch(instruction, /Application memory/);
+
+  const message = {
+    id: "m1",
+    content: "@bot hello",
+    guildId: "g1",
+    channelId: "c1",
+    createdTimestamp: Date.now(),
+    author: { id: "u1", username: "owner", bot: false },
+    member: { displayName: "Owner" },
+    attachments: new Map(),
+    channel: {
+      messages: {
+        fetch: async () => new Map([["m1", message]]),
+      },
+    },
+  };
+  const context = await buildContext(
+    message,
+    { user: { id: "bot" } },
+    {
+      blockedUsernames: new Set(),
+      contextMessages: 5,
+      contextTimestamps: false,
+      timeZone: "UTC",
+      discordEmojiPalette: ["<:spark:123456789012345678>"],
+    },
+    "System.",
+  );
+  assert.match(context[0].content, /Application Discord metadata/);
+  assert.match(context[0].content, /<:spark:123456789012345678>/);
 });
 
 test("marks bots and omits timestamps when the feature is disabled", () => {

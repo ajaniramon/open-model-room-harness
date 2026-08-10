@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { AudioModeState, ElevenLabsTtsClient } from "./audio-mode.js";
+import { BehaviorModeController } from "./behavior-mode.js";
+import { ChatRelayQueue } from "./chat-relay.js";
 import { config } from "./config.js";
 import { CodexRunner } from "./codex-runner.js";
 import { createDiscordBot } from "./discord-bot.js";
@@ -17,6 +19,7 @@ import { TavilyClient, WebToolRuntime } from "./web-tools.js";
 import { FxTwitterClient, KeylessXDiscovery, XPostPrefetcher } from "./x-tools.js";
 
 const promptUrl = new URL("./system-prompt.txt", import.meta.url);
+const promptExampleUrl = new URL("./system-prompt.example.txt", import.meta.url);
 const requiredConfiguration = [["DISCORD_TOKEN", config.discordToken]];
 if (config.chatApiKeyEnv) {
   requiredConfiguration.push([config.chatApiKeyEnv, config.chatApiKey]);
@@ -28,9 +31,24 @@ for (const [name, value] of requiredConfiguration) {
     );
   }
 }
-const systemPrompt =
-  `${(await readFile(fileURLToPath(promptUrl), "utf8")).trim()}\n\n` +
-  JJ_VISUAL_IDENTITY_SYSTEM_SECTION;
+async function loadSystemPrompt() {
+  if (config.chatProvider === "none") return "";
+  try {
+    return (await readFile(fileURLToPath(promptUrl), "utf8")).trim();
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    const fallback = (await readFile(fileURLToPath(promptExampleUrl), "utf8"))
+      .replaceAll("{{BOT_NAME}}", "the bot")
+      .trim();
+    console.warn("src/system-prompt.txt is missing; using bundled example prompt for this run.");
+    return fallback;
+  }
+}
+
+const baseSystemPrompt = await loadSystemPrompt();
+const systemPrompt = config.chatProvider === "none"
+  ? ""
+  : `${baseSystemPrompt}\n\n${JJ_VISUAL_IDENTITY_SYSTEM_SECTION}`;
 const xDiscovery = new KeylessXDiscovery();
 const fxTwitter = new FxTwitterClient(
   fetch,
@@ -60,6 +78,12 @@ const runtimeControl = config.runtimeControlEnabled
       restartEnabled: config.runtimeControlRestartEnabled,
     }).load()
   : null;
+const behaviorModeController = await new BehaviorModeController({
+  settings: config.behaviorMode,
+  statePath: config.behaviorMode.statePath,
+  auditLogger: runtimeControlAuditLogger,
+}).load();
+await behaviorModeController.startWatching();
 const memoryAuditLogger = new JsonlRequestLogger(config.memoryAudit);
 const memoryStore = config.memoryEnabled
   ? await new MemoryStore({
@@ -72,6 +96,7 @@ const memoryStore = config.memoryEnabled
     }).load()
   : null;
 const modelClient = new ModelClient(config, fetch, webTools);
+const chatRelay = new ChatRelayQueue(config.chatRelay);
 const memoryDigester =
   memoryStore && config.memoryExtractionEnabled
     ? new MemoryDigester({
@@ -79,6 +104,7 @@ const memoryDigester =
         modelClient,
         config,
         runtimeControl,
+        behaviorModeController,
       }).start()
     : null;
 const audioModeState = new AudioModeState(config.audioModeStatePath);
@@ -96,6 +122,7 @@ const codexRunner = new CodexRunner({
   yoloWorkspace: config.codexYoloWorkspace,
 });
 let client = null;
+let mcpControlServer = null;
 let shuttingDown = false;
 const shutdown = async (signal, exitCode = 0) => {
   if (shuttingDown) return;
@@ -105,6 +132,8 @@ const shutdown = async (signal, exitCode = 0) => {
   await participationController.close();
   await memoryDigester?.close();
   await memoryStore?.close();
+  await mcpControlServer?.close();
+  await behaviorModeController?.close();
   await participationAuditLogger.close();
   await memoryAuditLogger.close();
   await runtimeControl?.close();
@@ -117,6 +146,23 @@ const requestRuntimeRestart = () => {
   );
   timer.unref();
 };
+
+mcpControlServer = config.mcpControl.enabled
+  ? (await import("./mcp-control-server.js")).startMcpControlServer({
+      config,
+      behaviorModeController,
+      runtimeControl,
+      participationController,
+      requestRuntimeRestart,
+      memoryStore,
+      memoryDigester,
+      audioModeState,
+      audioConfigured: elevenLabs.configured,
+      chatRelay,
+      discordClient: () => client,
+      auditLogger: runtimeControlAuditLogger,
+    })
+  : null;
 
 client = createDiscordBot({
   config,
@@ -131,6 +177,8 @@ client = createDiscordBot({
   memoryStore,
   memoryDigester,
   runtimeControl,
+  behaviorModeController,
+  chatRelay,
   requestRuntimeRestart,
   systemPrompt,
 });

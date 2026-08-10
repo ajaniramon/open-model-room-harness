@@ -4,6 +4,7 @@ import { config } from "../src/config.js";
 
 test("configures all supported primary conversation providers", () => {
   assert.equal(config.chatProvider, "nanogpt");
+  assert.equal(config.modelProviders.none.model, "none");
   assert.equal(config.modelProviders.openai.model, "gpt-5.6-terra");
   assert.equal(config.modelProviders.anthropic.model, "claude-sonnet-5");
   assert.equal(config.modelProviders.xai.model, "grok-4.5");

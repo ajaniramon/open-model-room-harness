@@ -1,5 +1,6 @@
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
 const SUPPORTED_PROVIDERS = new Set([
+  "none",
   "nanogpt",
   "openai",
   "anthropic",
@@ -12,6 +13,7 @@ const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, mil
 
 function providerLabel(provider) {
   return {
+    none: "No model provider",
     nanogpt: "NanoGPT",
     openai: "OpenAI",
     anthropic: "Anthropic",
@@ -178,6 +180,16 @@ export class ModelClient {
     const defaults =
       this.config.modelProviders?.[provider] ||
       (provider === "nanogpt" ? legacyProviderConfig(this.config) : {});
+    if (provider === "none") {
+      return {
+        provider,
+        apiKey: "",
+        model: options.model || defaults.model || "none",
+        baseUrl: "",
+        reasoningEffort: "none",
+        maxOutputTokens: options.maxOutputTokens ?? this.config.maxOutputTokens,
+      };
+    }
     const route = {
       provider,
       apiKey: options.apiKey || defaults.apiKey || "",
@@ -200,6 +212,12 @@ export class ModelClient {
 
   async complete(messages, { enabledToolNames = [], ...options } = {}) {
     const route = this.route(options);
+    if (route.provider === "none") {
+      return (
+        "[model disabled] Discord connectivity is running without an inference provider. " +
+        "Runtime controls, behavior modes, participation policy, and MCP plumbing can be tested."
+      );
+    }
     const conversation = messages.map((message) => ({ ...message }));
     const maxIterations = this.config.maxToolIterations || 4;
     let emptyResponseRetries = 0;
