@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Discord Scopes</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #101114;
+      --panel: #181b20;
+      --line: #30343c;
+      --text: #eceff3;
+      --muted: #9aa3ad;
+      --accent: #3fb6b2;
+      --accent-2: #6ea8fe;
+      --danger: #ff6b6b;
+      --ok: #6bd389;
+      --warn: #f0b85a;
+      --radius: 6px;
+      font-family: "Segoe UI", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font-size: 14px; }
+    header {
+      display: flex; gap: 10px; align-items: center; padding: 12px 16px;
+      border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2;
+    }
+    h1 { font-size: 17px; margin: 0 auto 0 0; font-weight: 700; }
+    main { display: grid; grid-template-columns: minmax(260px, 360px) 1fr; min-height: calc(100vh - 54px); }
+    aside { border-right: 1px solid var(--line); padding: 12px; overflow: auto; }
+    section { padding: 16px; overflow: auto; }
+    button, input, select, textarea {
+      font: inherit; border-radius: var(--radius); border: 1px solid var(--line);
+      background: #11151a; color: var(--text);
+    }
+    button { padding: 7px 10px; cursor: pointer; }
+    button:hover { border-color: var(--accent); }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #071313; font-weight: 700; }
+    button.danger { color: var(--danger); }
+    button.ghost { background: transparent; }
+    input, select, textarea { width: 100%; padding: 7px 9px; }
+    textarea { min-height: 70px; resize: vertical; font-family: "Cascadia Code", Consolas, monospace; }
+    label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
+    label span { color: var(--muted); }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .grid { display: grid; gap: 12px; max-width: 900px; }
+    .two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .scope-list { display: grid; gap: 6px; }
+    .scope-button {
+      text-align: left; padding: 9px; border-color: var(--line); display: grid; gap: 2px;
+    }
+    .scope-button.active { border-color: var(--accent); background: #142425; }
+    .scope-button strong { font-size: 13px; }
+    .scope-button small { color: var(--muted); }
+    .box { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; background: var(--panel); }
+    .channels { max-height: 330px; overflow: auto; display: grid; gap: 5px; }
+    .channel {
+      display: grid; grid-template-columns: 22px 1fr auto; gap: 8px; align-items: center;
+      padding: 7px; border: 1px solid var(--line); border-radius: var(--radius); background: #11151a;
+    }
+    .channel input { width: auto; }
+    .channel code { color: var(--muted); font-size: 11px; }
+    .sendable { color: var(--ok); }
+    .blocked { color: var(--warn); }
+    .status { color: var(--muted); font-size: 12px; }
+    .toast {
+      position: fixed; right: 14px; bottom: 14px; max-width: 440px; padding: 10px 12px;
+      border-radius: var(--radius); background: #202630; border: 1px solid var(--line);
+    }
+    .hidden { display: none; }
+    @media (max-width: 760px) {
+      main { grid-template-columns: 1fr; }
+      aside { border-right: 0; border-bottom: 1px solid var(--line); }
+      .two { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Discord Scopes</h1>
+    <button id="reload" class="ghost">Reload</button>
+    <button id="newScope" class="primary">New Scope</button>
+  </header>
+  <main>
+    <aside>
+      <div class="scope-list" id="scopeList"></div>
+    </aside>
+    <section>
+      <form id="scopeForm" class="grid hidden">
+        <div class="row">
+          <button id="saveScope" class="primary" type="submit">Save Scope</button>
+          <button id="deleteScope" class="danger" type="button">Delete</button>
+          <span class="status" id="status"></span>
+        </div>
+        <div class="grid two">
+          <label><span>Name</span><input id="scopeName" required pattern="[A-Za-z0-9_-]{1,40}"></label>
+          <label><span>Label</span><input id="label"></label>
+          <label><span>Attention Mode</span>
+            <select id="attentionMode">
+              <option value="mentions_only">mentions_only</option>
+              <option value="all">all</option>
+              <option value="name_match">name_match</option>
+              <option value="keywords">keywords</option>
+            </select>
+          </label>
+          <label><span>Default Channel</span><select id="defaultChannelId"></select></label>
+        </div>
+        <div class="row">
+          <label class="row"><input id="allowSend" type="checkbox"> <span>allow scoped sends</span></label>
+          <label class="row"><input id="allowRelayReply" type="checkbox"> <span>allow relay replies</span></label>
+          <label class="row"><input id="includeRepliesToSelf" type="checkbox"> <span>include replies to self</span></label>
+        </div>
+        <div class="grid two">
+          <label><span>Names, comma-separated</span><textarea id="names"></textarea></label>
+          <label><span>Keywords, comma-separated</span><textarea id="keywords"></textarea></label>
+        </div>
+        <div class="box grid">
+          <div class="row">
+            <label style="min-width:260px"><span>Guild</span><select id="guildSelect"></select></label>
+            <button id="loadChannels" type="button">Load Channels</button>
+            <span class="status" id="guildStatus"></span>
+          </div>
+          <div class="channels" id="channels"></div>
+        </div>
+      </form>
+      <div id="empty" class="box">No scope selected.</div>
+    </section>
+  </main>
+  <div id="toast" class="toast hidden"></div>
+  <script>
+    const token = new URLSearchParams(location.search).get("access_token") || "";
+    const authQuery = token ? `?access_token=${encodeURIComponent(token)}` : "";
+    const state = { scopes: [], selected: null, guilds: [], channels: [] };
+    const $ = (id) => document.getElementById(id);
+
+    function toast(text) {
+      $("toast").textContent = text;
+      $("toast").classList.remove("hidden");
+      setTimeout(() => $("toast").classList.add("hidden"), 3200);
+    }
+
+    async function api(path, options = {}) {
+      const separator = path.includes("?") ? "&" : "?";
+      const res = await fetch(path + (token ? `${separator}access_token=${encodeURIComponent(token)}` : ""), {
+        ...options,
+        headers: { "content-type": "application/json", ...(options.headers || {}) },
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      return body;
+    }
+
+    function splitList(value) {
+      return [...new Set(String(value || "").split(",").map((item) => item.trim()).filter(Boolean))];
+    }
+
+    function renderList() {
+      $("scopeList").innerHTML = state.scopes.map((scope) => `
+        <button class="scope-button ${state.selected?.name === scope.name ? "active" : ""}" data-scope="${scope.name}">
+          <strong>${escapeHtml(scope.label || scope.name)}</strong>
+          <small>${scope.channelIds.length} channel(s), send ${scope.allowSend ? "on" : "off"}</small>
+        </button>
+      `).join("") || `<div class="status">No scopes yet.</div>`;
+      document.querySelectorAll("[data-scope]").forEach((button) => {
+        button.addEventListener("click", () => selectScope(button.dataset.scope));
+      });
+    }
+
+    function renderChannels() {
+      const chosen = new Set(state.selected?.channelIds || []);
+      $("channels").innerHTML = state.channels.map((channel) => `
+        <label class="channel">
+          <input type="checkbox" value="${channel.id}" ${chosen.has(channel.id) ? "checked" : ""}>
+          <span>#${escapeHtml(channel.name || channel.id)} <code>${channel.id}</code></span>
+          <span class="${channel.sendable ? "sendable" : "blocked"}">${channel.sendable ? "sendable" : "no send"}</span>
+        </label>
+      `).join("") || `<div class="status">Load a guild to pick channels.</div>`;
+      renderDefaultChannelOptions();
+    }
+
+    function renderDefaultChannelOptions() {
+      const chosenIds = getSelectedChannelIds();
+      const options = [`<option value="">No default</option>`]
+        .concat(chosenIds.map((id) => {
+          const channel = state.channels.find((entry) => entry.id === id);
+          const label = channel ? `#${channel.name}` : id;
+          return `<option value="${id}">${escapeHtml(label)}</option>`;
+        }));
+      $("defaultChannelId").innerHTML = options.join("");
+      $("defaultChannelId").value = state.selected?.defaultChannelId || "";
+    }
+
+    function getSelectedChannelIds() {
+      return [...document.querySelectorAll("#channels input:checked")].map((input) => input.value);
+    }
+
+    function selectScope(name) {
+      state.selected = state.scopes.find((scope) => scope.name === name) || null;
+      if (!state.selected) return;
+      $("scopeForm").classList.remove("hidden");
+      $("empty").classList.add("hidden");
+      $("scopeName").value = state.selected.name;
+      $("scopeName").disabled = true;
+      $("label").value = state.selected.label || "";
+      $("attentionMode").value = state.selected.attentionMode || "mentions_only";
+      $("allowSend").checked = state.selected.allowSend === true;
+      $("allowRelayReply").checked = state.selected.allowRelayReply !== false;
+      $("includeRepliesToSelf").checked = state.selected.includeRepliesToSelf !== false;
+      $("names").value = (state.selected.names || []).join(", ");
+      $("keywords").value = (state.selected.keywords || []).join(", ");
+      renderChannels();
+      renderList();
+    }
+
+    function newScope() {
+      state.selected = {
+        name: "",
+        label: "",
+        guildIds: [],
+        channelIds: [],
+        defaultChannelId: "",
+        allowSend: false,
+        allowRelayReply: true,
+        attentionMode: "mentions_only",
+        names: [],
+        keywords: [],
+        includeRepliesToSelf: true,
+      };
+      $("scopeForm").classList.remove("hidden");
+      $("empty").classList.add("hidden");
+      $("scopeName").disabled = false;
+      $("scopeName").value = "";
+      $("label").value = "";
+      $("attentionMode").value = "mentions_only";
+      $("allowSend").checked = false;
+      $("allowRelayReply").checked = true;
+      $("includeRepliesToSelf").checked = true;
+      $("names").value = "";
+      $("keywords").value = "";
+      renderChannels();
+      renderList();
+      $("scopeName").focus();
+    }
+
+    async function loadScopes() {
+      const data = await api("/api/discord-scopes");
+      state.scopes = data.scopes || [];
+      renderList();
+      if (state.selected?.name) selectScope(state.selected.name);
+    }
+
+    async function loadGuilds() {
+      const data = await api("/api/discord-guilds");
+      state.guilds = data.guilds || [];
+      $("guildSelect").innerHTML = state.guilds.map((guild) =>
+        `<option value="${guild.id}">${escapeHtml(guild.name)} (${guild.id})</option>`,
+      ).join("");
+      $("guildStatus").textContent = data.ready ? `${state.guilds.length} guild(s)` : "Discord not ready";
+    }
+
+    async function loadChannels() {
+      const guildId = $("guildSelect").value;
+      if (!guildId) return;
+      const data = await api(`/api/discord-guilds/${encodeURIComponent(guildId)}/channels`);
+      state.channels = data.channels || [];
+      $("guildStatus").textContent = `${state.channels.length} text channel(s)`;
+      renderChannels();
+    }
+
+    async function saveScope(event) {
+      event.preventDefault();
+      const name = $("scopeName").value.trim();
+      const channelIds = getSelectedChannelIds();
+      const guildId = $("guildSelect").value;
+      const payload = {
+        label: $("label").value.trim(),
+        guildIds: guildId ? [guildId] : state.selected.guildIds || [],
+        channelIds,
+        defaultChannelId: $("defaultChannelId").value || "",
+        allowSend: $("allowSend").checked,
+        allowRelayReply: $("allowRelayReply").checked,
+        attentionMode: $("attentionMode").value,
+        names: splitList($("names").value),
+        keywords: splitList($("keywords").value),
+        includeRepliesToSelf: $("includeRepliesToSelf").checked,
+      };
+      const saved = await api(`/api/discord-scopes/${encodeURIComponent(name)}`, {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      });
+      toast(`Saved ${saved.scope.name}`);
+      state.selected = saved.scope;
+      await loadScopes();
+      selectScope(saved.scope.name);
+    }
+
+    async function deleteSelectedScope() {
+      if (!state.selected?.name) return;
+      if (!confirm(`Delete scope "${state.selected.name}"?`)) return;
+      await api(`/api/discord-scopes/${encodeURIComponent(state.selected.name)}`, { method: "DELETE" });
+      toast("Scope deleted");
+      state.selected = null;
+      $("scopeForm").classList.add("hidden");
+      $("empty").classList.remove("hidden");
+      await loadScopes();
+    }
+
+    function escapeHtml(value) {
+      return String(value || "").replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+      })[char]);
+    }
+
+    $("reload").addEventListener("click", () => Promise.all([loadScopes(), loadGuilds()]).catch((err) => toast(err.message)));
+    $("newScope").addEventListener("click", newScope);
+    $("loadChannels").addEventListener("click", () => loadChannels().catch((err) => toast(err.message)));
+    $("scopeForm").addEventListener("submit", (event) => saveScope(event).catch((err) => toast(err.message)));
+    $("deleteScope").addEventListener("click", () => deleteSelectedScope().catch((err) => toast(err.message)));
+    $("channels").addEventListener("change", renderDefaultChannelOptions);
+
+    Promise.all([loadScopes(), loadGuilds()]).catch((err) => toast(err.message));
+  </script>
+</body>
+</html>

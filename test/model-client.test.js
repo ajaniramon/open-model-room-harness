@@ -6,6 +6,11 @@ function testConfig(provider) {
   return {
     chatProvider: provider,
     modelProviders: {
+      none: {
+        apiKey: "",
+        model: "none",
+        baseUrl: "",
+      },
       nanogpt: {
         apiKey: "nano-key",
         model: "nano-model",
@@ -43,6 +48,19 @@ function testConfig(provider) {
     maxToolIterations: 4,
   };
 }
+
+test("supports a provider-free Discord connectivity mode", async () => {
+  let called = false;
+  const fetchMock = async () => {
+    called = true;
+    return Response.json({});
+  };
+  const result = await new ModelClient(testConfig("none"), fetchMock).complete([
+    { role: "user", content: "Hello" },
+  ]);
+  assert.match(result, /model disabled/i);
+  assert.equal(called, false);
+});
 
 test("routes OpenAI through Chat Completions with provider auth", async () => {
   let request;

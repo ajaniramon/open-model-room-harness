@@ -2,6 +2,8 @@ import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config as loadEnv } from "dotenv";
+import { DEFAULT_BEHAVIOR_MODE_SETTINGS } from "./behavior-mode.js";
+import { normalizeDiscordScopes } from "./discord-scopes.js";
 import { loadJsonConfig, setting } from "./config-source.js";
 import { resolveTimeZone } from "./message-time.js";
 import { normalizeParticipationPolicy } from "./participation-policy.js";
@@ -65,8 +67,8 @@ if (!new Set(["mention", "all"]).has(triggerMode)) {
 }
 const timeZone = resolveTimeZone(process.env.JJ_TIME_ZONE);
 const chatProvider = process.env.MODEL_PROVIDER?.trim().toLowerCase() || "nanogpt";
-if (!new Set(["nanogpt", "openai", "anthropic", "xai", "gemini", "local"]).has(chatProvider)) {
-  throw new Error("MODEL_PROVIDER must be one of: nanogpt, openai, anthropic, xai, gemini, local");
+if (!new Set(["none", "nanogpt", "openai", "anthropic", "xai", "gemini", "local"]).has(chatProvider)) {
+  throw new Error("MODEL_PROVIDER must be one of: none, nanogpt, openai, anthropic, xai, gemini, local");
 }
 
 const memoryCaptureMode = String(
@@ -81,6 +83,34 @@ const spontaneousMaxMessages = integer("JJ_SPONTANEOUS_MAX_MESSAGES", 24, { min:
 if (spontaneousMaxMessages < spontaneousMinMessages) {
   throw new Error("JJ_SPONTANEOUS_MAX_MESSAGES must be at least JJ_SPONTANEOUS_MIN_MESSAGES");
 }
+
+const behaviorModeEnabled = configuredBoolean(
+  "behaviorMode.enabled",
+  "BEHAVIOR_MODE_ENABLED",
+  DEFAULT_BEHAVIOR_MODE_SETTINGS.enabled,
+);
+const behaviorModeDefault = String(
+  configured(
+    "behaviorMode.defaultMode",
+    "BEHAVIOR_MODE_DEFAULT",
+    DEFAULT_BEHAVIOR_MODE_SETTINGS.defaultMode,
+  ),
+)
+  .trim()
+  .toLowerCase();
+const behaviorModeAutoCooldownSeconds = configuredInteger(
+  "behaviorMode.auto.cooldownSeconds",
+  "BEHAVIOR_MODE_AUTO_COOLDOWN_SECONDS",
+  DEFAULT_BEHAVIOR_MODE_SETTINGS.auto.cooldownSeconds,
+  { min: 0, max: 86_400 },
+);
+const behaviorModeAutoMaxRepliesPerHour = configuredInteger(
+  "behaviorMode.auto.maxRepliesPerHour",
+  "BEHAVIOR_MODE_AUTO_MAX_REPLIES_PER_HOUR",
+  DEFAULT_BEHAVIOR_MODE_SETTINGS.auto.maxRepliesPerHour,
+  { min: 0, max: 500 },
+);
+const mcpControlEnabled = configuredBoolean("mcpControl.enabled", "MCP_CONTROL_ENABLED", false);
 
 const participationPolicy = normalizeParticipationPolicy({
   enabled: configuredBoolean("participation.enabled", "JJ_PARTICIPATION_ENABLED", true),
@@ -114,6 +144,11 @@ const participationPolicy = normalizeParticipationPolicy({
 const subscriptionEndpoint = "https://nano-gpt.com/api/subscription/v1/chat/completions";
 const paidEndpoint = "https://nano-gpt.com/api/v1/chat/completions";
 const modelProviders = Object.freeze({
+  none: Object.freeze({
+    apiKey: "",
+    model: "none",
+    baseUrl: "",
+  }),
   nanogpt: Object.freeze({
     apiKey: process.env.NANOGPT_API_KEY?.trim() || "",
     model: process.env.NANOGPT_MODEL?.trim() || "xiaomi/mimo-v2.5-pro:thinking",
@@ -158,6 +193,7 @@ const modelProviders = Object.freeze({
   }),
 });
 const providerApiKeyEnv = Object.freeze({
+  none: null,
   nanogpt: "NANOGPT_API_KEY",
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
@@ -262,11 +298,15 @@ export const config = Object.freeze({
     "https://nano-gpt.com/api/subscription/v1/chat/completions",
   triggerMode,
   allowedChannelIds: new Set(
-    (process.env.JJ_ALLOWED_CHANNEL_IDS || "")
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean),
+    configuredList("discord.allowedChannelIds", "JJ_ALLOWED_CHANNEL_IDS"),
   ),
+  discordEmojiPalette: Object.freeze(
+    configuredList("discord.emojiPalette", "DISCORD_EMOJI_PALETTE")
+      .map((value) => String(value).replace(/\s+/g, " ").trim())
+      .filter((value) => value.length >= 2 && value.length <= 120)
+      .slice(0, 8),
+  ),
+  discordScopes: normalizeDiscordScopes(configured("discord.scopes", "JJ_DISCORD_SCOPES", {})),
   blockedUsernames: new Set(
     (process.env.JJ_BLOCKED_USERNAMES || "")
       .split(",")
@@ -466,6 +506,50 @@ export const config = Object.freeze({
     maxArchives: configuredInteger("logging.participation.maxArchives", "JJ_PARTICIPATION_AUDIT_MAX_ARCHIVES", 5, { min: 1, max: 100 }),
     includeBodies: false,
     maxValueChars: 10_000,
+  }),
+  behaviorMode: Object.freeze({
+    enabled: behaviorModeEnabled,
+    defaultMode: behaviorModeDefault,
+    statePath: resolve(
+      projectRoot,
+      String(
+        configured(
+          "behaviorMode.statePath",
+          "BEHAVIOR_MODE_STATE_PATH",
+          DEFAULT_BEHAVIOR_MODE_SETTINGS.statePath,
+        ),
+      ),
+    ),
+    auto: Object.freeze({
+      cooldownSeconds: behaviorModeAutoCooldownSeconds,
+      maxRepliesPerHour: behaviorModeAutoMaxRepliesPerHour,
+    }),
+  }),
+  mcpControl: Object.freeze({
+    enabled: mcpControlEnabled,
+    host: String(configured("mcpControl.host", "MCP_CONTROL_HOST", "127.0.0.1")),
+    port: configuredInteger("mcpControl.port", "MCP_CONTROL_PORT", 3000, {
+      min: 1,
+      max: 65_535,
+    }),
+    bearerToken: String(configured("mcpControl.bearerToken", "MCP_CONTROL_BEARER_TOKEN", "")),
+  }),
+  chatRelay: Object.freeze({
+    enabled: configuredBoolean("chatRelay.enabled", "CHAT_RELAY_ENABLED", false),
+    ttlMs: configuredInteger("chatRelay.ttlSeconds", "CHAT_RELAY_TTL_SECONDS", 600, {
+      min: 5,
+      max: 86_400,
+    }) * 1_000,
+    maxItems: configuredInteger("chatRelay.maxItems", "CHAT_RELAY_MAX_ITEMS", 50, {
+      min: 1,
+      max: 500,
+    }),
+    maxContextChars: configuredInteger(
+      "chatRelay.maxContextChars",
+      "CHAT_RELAY_MAX_CONTEXT_CHARS",
+      12_000,
+      { min: 500, max: 100_000 },
+    ),
   }),
   // Memory is OFF by default. It stores content from a shared room, so an operator
   // has to switch it on deliberately and take on the obligations in README §Memory.
