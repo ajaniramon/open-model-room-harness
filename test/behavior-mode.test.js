@@ -5,6 +5,16 @@ import { join } from "node:path";
 import test from "node:test";
 import { BehaviorModeController } from "../src/behavior-mode.js";
 
+async function temporaryController(t, options = {}) {
+  const root = await mkdtemp(join(tmpdir(), "behavior-mode-test-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  return new BehaviorModeController({
+    settings: { enabled: true, ...(options.settings || {}) },
+    statePath: join(root, "state", "behavior-mode.json"),
+    ...options,
+  }).load();
+}
+
 test("resolves disabled behavior modes as manual", () => {
   const controller = new BehaviorModeController({ settings: { enabled: false } });
   assert.deepEqual(controller.resolve({ guildId: "g", channelId: "c" }), {
@@ -19,25 +29,35 @@ test("resolves disabled behavior modes as manual", () => {
   });
 });
 
-test("resolves channel overrides before guild and global modes", async () => {
-  const controller = await new BehaviorModeController({
-    settings: { enabled: true },
-  }).load();
-  await controller.setMode({ mode: "quiet" });
+test("resolves channel overrides before guild and global modes", async (t) => {
+  const controller = await temporaryController(t);
+  await controller.setMode({ mode: "manual" });
   await controller.setMode({ mode: "observe", guildId: "guild" });
   await controller.setMode({ mode: "auto", guildId: "guild", channelId: "channel" });
 
   assert.equal(controller.resolve({ guildId: "guild", channelId: "channel" }).mode, "auto");
   assert.equal(controller.resolve({ guildId: "guild", channelId: "other" }).mode, "observe");
-  assert.equal(controller.resolve({ guildId: "other", channelId: "elsewhere" }).mode, "quiet");
+  assert.equal(controller.resolve({ guildId: "other", channelId: "elsewhere" }).mode, "manual");
 });
 
-test("expires scoped overrides and falls back to the next available scope", async () => {
+test("treats global quiet modes as safety overrides and normalizes the legacy alias", async (t) => {
+  const controller = await temporaryController(t);
+  await controller.setMode({ mode: "auto", guildId: "guild", channelId: "channel" });
+  await controller.setMode({ mode: "quiet" });
+
+  const resolved = controller.resolve({ guildId: "guild", channelId: "channel" });
+  assert.equal(resolved.mode, "maintenance");
+  assert.equal(resolved.scope, "global");
+
+  await controller.setMode({ mode: "observe" });
+  assert.equal(controller.resolve({ guildId: "guild", channelId: "channel" }).mode, "observe");
+});
+
+test("expires scoped overrides and falls back to the next available scope", async (t) => {
   let now = Date.parse("2026-08-01T12:00:00.000Z");
-  const controller = await new BehaviorModeController({
-    settings: { enabled: true },
+  const controller = await temporaryController(t, {
     now: () => now,
-  }).load();
+  });
   await controller.setMode({ mode: "manual", guildId: "guild" });
   await controller.setMode({
     mode: "auto",
@@ -88,10 +108,8 @@ test("persists behavior mode state without hardcoded identities", async () => {
   }
 });
 
-test("maps behavior modes to reply, capture, and auto decisions", async () => {
-  const controller = await new BehaviorModeController({
-    settings: { enabled: true },
-  }).load();
+test("maps behavior modes to reply, capture, and auto decisions", async (t) => {
+  const controller = await temporaryController(t);
 
   await controller.setMode({ mode: "manual" });
   assert.equal(controller.allowsNonOwnerReply(), true);
@@ -108,18 +126,17 @@ test("maps behavior modes to reply, capture, and auto decisions", async () => {
   assert.equal(controller.allowsSpontaneousReply(), true);
   assert.equal(controller.allowsMemoryCapture(), false);
 
-  await controller.setMode({ mode: "quiet" });
+  await controller.setMode({ mode: "maintenance" });
   assert.equal(controller.allowsNonOwnerReply(), false);
   assert.equal(controller.allowsSpontaneousReply(), false);
   assert.equal(controller.allowsMemoryCapture("unused", "always"), false);
 });
 
-test("enforces auto cooldown and hourly reply limits per scope", async () => {
+test("enforces auto cooldown and hourly reply limits per scope", async (t) => {
   let now = 1_000;
-  const controller = await new BehaviorModeController({
-    settings: { enabled: true },
+  const controller = await temporaryController(t, {
     now: () => now,
-  }).load();
+  });
   await controller.setMode({
     mode: "auto",
     channelId: "channel",
@@ -144,12 +161,11 @@ test("enforces auto cooldown and hourly reply limits per scope", async () => {
   assert.deepEqual(controller.canRecordAutoResponse({ channelId: "channel" }), { allowed: true });
 });
 
-test("applies inherited auto limits to the resolved behavior scope", async () => {
+test("applies inherited auto limits to the resolved behavior scope", async (t) => {
   let now = 1_000;
-  const controller = await new BehaviorModeController({
-    settings: { enabled: true },
+  const controller = await temporaryController(t, {
     now: () => now,
-  }).load();
+  });
   await controller.setMode({
     mode: "auto",
     guildId: "guild",
@@ -171,8 +187,9 @@ test("applies inherited auto limits to the resolved behavior scope", async () =>
 test("reloads behavior mode state written by another process", async () => {
   const root = await mkdtemp(join(tmpdir(), "behavior-mode-watch-"));
   const path = join(root, "state", "behavior-mode.json");
+  let controller;
   try {
-    const controller = await new BehaviorModeController({
+    controller = await new BehaviorModeController({
       settings: { enabled: true },
       statePath: path,
     }).load();
@@ -199,9 +216,9 @@ test("reloads behavior mode state written by another process", async () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 150));
 
-    assert.equal(controller.resolve().mode, "quiet");
-    await controller.close();
+    assert.equal(controller.resolve().mode, "maintenance");
   } finally {
+    await controller?.close();
     await rm(root, { recursive: true, force: true });
   }
 });

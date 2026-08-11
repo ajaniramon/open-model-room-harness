@@ -505,6 +505,24 @@ test("MCP control server creates scopes and sends only inside them", async () =>
     );
     assert.equal(rejected.ok, false);
     assert.equal(sent.length, 1);
+
+    const guildWide = JSON.parse(
+      (await callTool(port, "set_discord_scope", {
+        scope: "guildWide",
+        guildIds: ["guild-1"],
+        allowSend: true,
+      })).result.content[0].text,
+    );
+    assert.equal(guildWide.name, "guildWide");
+    const guildAccepted = JSON.parse(
+      (await callTool(port, "send_scoped_discord_message", {
+        scope: "guildWide",
+        channelId: "channel-2",
+        message: "guild announcement",
+      })).result.content[0].text,
+    );
+    assert.equal(guildAccepted.ok, true);
+    assert.equal(sent.length, 2);
     assert.deepEqual(
       audits
         .filter((event) => event.type === "mcp_scoped_discord_send")
@@ -512,6 +530,7 @@ test("MCP control server creates scopes and sends only inside them", async () =>
       [
         ["sent", "channel-1", "@everyone hello".length, false],
         ["rejected", "channel-2", "not here".length, false],
+        ["sent", "channel-2", "guild announcement".length, false],
       ],
     );
   } finally {

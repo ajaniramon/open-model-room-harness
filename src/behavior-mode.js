@@ -6,7 +6,7 @@ import { dirname } from "node:path";
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 
-export const BEHAVIOR_MODES = Object.freeze(["manual", "observe", "auto", "quiet"]);
+export const BEHAVIOR_MODES = Object.freeze(["manual", "observe", "auto", "maintenance"]);
 const BEHAVIOR_MODE_SET = new Set(BEHAVIOR_MODES);
 
 export const DEFAULT_BEHAVIOR_MODE_SETTINGS = Object.freeze({
@@ -20,9 +20,10 @@ export const DEFAULT_BEHAVIOR_MODE_SETTINGS = Object.freeze({
 });
 
 function normalizeMode(mode, label = "mode") {
-  const value = String(mode || "").trim().toLowerCase();
+  const requested = String(mode || "").trim().toLowerCase();
+  const value = requested === "quiet" ? "maintenance" : requested;
   if (!BEHAVIOR_MODE_SET.has(value)) {
-    throw new Error(`${label} must be one of: ${BEHAVIOR_MODES.join(", ")}`);
+    throw new Error(`${label} must be one of: ${BEHAVIOR_MODES.join(", ")} (quiet is a legacy alias for maintenance)`);
   }
   return value;
 }
@@ -240,6 +241,12 @@ export class BehaviorModeController {
     }
     this.#expire();
     const normalized = normalizeScope(scope);
+    const globalEntry = this.entries.get("global");
+    // Global silent modes are safety overrides. Scoped auto/manual entries must
+    // never make one channel speak through a global observation or maintenance lock.
+    if (globalEntry && new Set(["observe", "maintenance"]).has(globalEntry.mode)) {
+      return this.#resolved({ ...globalEntry, source: globalEntry.type });
+    }
     const keys = [
       normalized.channelId ? `channel:${normalized.channelId}` : null,
       normalized.guildId ? `guild:${normalized.guildId}` : null,
@@ -298,7 +305,7 @@ export class BehaviorModeController {
   }
 
   allowsNonOwnerReply(scope = {}) {
-    return !new Set(["observe", "quiet"]).has(this.resolve(scope).mode);
+    return !new Set(["observe", "maintenance"]).has(this.resolve(scope).mode);
   }
 
   allowsSpontaneousReply(scope = {}) {
@@ -307,9 +314,16 @@ export class BehaviorModeController {
 
   allowsMemoryCapture(scope = {}, captureMode = "observation") {
     const mode = this.resolve(scope).mode;
-    if (mode === "quiet") return false;
+    if (mode === "maintenance") return false;
     if (captureMode === "always") return true;
     return mode === "observe";
+  }
+
+  allowsReply(scope = {}, { ownerAuthorized = false, spontaneous = false } = {}) {
+    const mode = this.resolve(scope).mode;
+    if (spontaneous) return mode === "auto";
+    if (mode === "observe" || mode === "maintenance") return ownerAuthorized === true;
+    return true;
   }
 
   canRecordAutoResponse(scope = {}) {
@@ -342,7 +356,6 @@ export class BehaviorModeController {
     this.watcher?.close();
     this.watcher = null;
     await this.reloading;
-    await this.auditLogger?.close?.();
   }
 
   #resolved(entry) {

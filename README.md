@@ -299,28 +299,31 @@ environment variables documented in `.env.example` remain deployment fallbacks.
 
 ## Behavior modes
 
-Behavior modes are an optional, generic runtime policy layer. They are disabled by
-default, so existing deployments keep the current participation behavior until
-`BEHAVIOR_MODE_ENABLED=true` or `behaviorMode.enabled` is set.
+Behavior modes are the single runtime policy for Discord replies, spontaneous
+participation, and passive memory capture. Existing deployments are migrated
+automatically: the previous spontaneous-participation setting becomes the initial
+`auto` or `manual` default, and a legacy runtime-control state is imported once.
 
 The four modes are:
 
 | Mode | Behavior |
 | --- | --- |
-| `manual` | Normal configured reply behavior; spontaneous participation is off while behavior modes are enabled. |
+| `manual` | Normal direct reply behavior; spontaneous participation is off. |
 | `observe` | Silent for non-owner users, but passive memory capture can run when extraction is enabled. |
 | `auto` | Event-driven spontaneous participation is allowed, still bounded by participation limits and auto cooldowns. |
-| `quiet` | Silent for non-owner users and passive capture is paused. |
+| `maintenance` | Silent for non-owner users and passive capture is paused. |
 
 Modes can be global, guild-scoped, or channel-scoped. Channel overrides win over
-guild overrides, which win over the global/default mode. Overrides may include an
-expiry, a per-scope auto cooldown, and a maximum number of auto replies per hour.
+guild overrides, which win over the global/default mode. A global `observe` or
+`maintenance` lock is a safety override and cannot be bypassed by a scoped
+`manual`/`auto` entry. Overrides may include an expiry, a per-scope auto cooldown,
+and a maximum number of auto replies per hour. `quiet` remains accepted as a legacy
+alias for `maintenance`.
 
 An optional MCP control server can expose only the behavior switches, not raw
 Discord send/read tools:
 
 ```dotenv
-BEHAVIOR_MODE_ENABLED=true
 MCP_CONTROL_ENABLED=true
 MCP_CONTROL_BEARER_TOKEN=replace-with-a-private-token
 ```
@@ -446,13 +449,17 @@ mention parsing disabled.
 
 ## Remote runtime control
 
-`maintenance on`, `wake`, and `status` are deterministic owner commands handled
-before inference. Maintenance persists across restarts and turns the companion into
-an owner-only bot: the owner retains normal replies and authorized tools, while every
+`maintenance on`, `observation on`, `wake`, and `status` are deterministic owner
+commands handled before inference. They are compatibility aliases over the same
+global behavior policy used by MCP; there is no second runtime-mode switch. The
+unified state persists in `state/behavior-mode.json`.
+
+Maintenance turns the companion into an owner-only bot: the owner retains normal
+replies and authorized tools, while every
 other human, bot, webhook, and model call is discarded before inference. Spontaneous
 participation stops in every channel, including for the owner, because it speaks to
-the whole room rather than answering the owner. The flag is global, not per channel,
-and it is re-checked when a queued turn starts and again before the bot speaks, so
+the whole room rather than answering the owner. The command sets a global safety
+override, and it is re-checked when a queued turn starts and again before the bot speaks, so
 turns admitted in another channel before the toggle never land afterwards.
 
 `restart runtime` is disabled by default. The desktop installer can enable it when

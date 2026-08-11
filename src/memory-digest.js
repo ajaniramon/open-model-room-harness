@@ -75,11 +75,20 @@ export function parseExtraction(raw, { roster, maxFacts = 5, maxTextChars = 200 
 }
 
 export class MemoryDigester {
-  constructor({ store, modelClient, config, runtimeControl = null, logger = console, now = Date.now }) {
+  constructor({
+    store,
+    modelClient,
+    config,
+    runtimeControl = null,
+    behaviorModeController = null,
+    logger = console,
+    now = Date.now,
+  }) {
     this.store = store;
     this.modelClient = modelClient;
     this.config = config;
     this.runtimeControl = runtimeControl;
+    this.behaviorModeController = behaviorModeController;
     this.logger = logger;
     this.now = now;
     this.buffers = new Map();
@@ -97,15 +106,25 @@ export class MemoryDigester {
     return this;
   }
 
-  capturing() {
+  capturing(scope = {}) {
+    const buffered = scope.channelId ? this.buffers.get(scope.channelId) : null;
+    const resolvedScope = {
+      guildId: scope.guildId || buffered?.guildId || null,
+      channelId: scope.channelId || null,
+    };
     return (
       this.config.memoryExtractionEnabled &&
-      allowsMemoryCapture(this.runtimeControl, this.config.memoryExtractionCaptureMode)
+      (this.behaviorModeController?.enabled
+        ? this.behaviorModeController.allowsMemoryCapture(
+            resolvedScope,
+            this.config.memoryExtractionCaptureMode,
+          )
+        : allowsMemoryCapture(this.runtimeControl, this.config.memoryExtractionCaptureMode))
     );
   }
 
   observe(message, botUserId) {
-    if (!this.capturing()) return false;
+    if (!this.capturing({ guildId: message.guildId, channelId: message.channelId })) return false;
     if (!message.guildId) return false;
     if (message.author?.bot || message.webhookId) return false;
     if (String(message.author?.id) === String(botUserId)) return false;
@@ -142,6 +161,7 @@ export class MemoryDigester {
     const idleMs = this.config.memoryExtractionIdleMs;
     for (const [channelId, buffer] of [...this.buffers]) {
       if (this.now() - buffer.lastActivityAt < idleMs) continue;
+      if (!this.capturing(buffer)) continue;
       if (buffer.entries.length < this.config.memoryExtractionMinMessages) {
         this.buffers.delete(channelId);
         continue;

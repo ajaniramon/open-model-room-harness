@@ -64,6 +64,9 @@ export function normalizeDiscordScope(input = {}, fallback = {}) {
   if (scope.defaultChannelId && !scope.channelIds.includes(scope.defaultChannelId)) {
     scope.channelIds.unshift(scope.defaultChannelId);
   }
+  if (scope.allowSend && !scope.guildIds.length && !scope.channelIds.length) {
+    throw new Error("A send-enabled scope must restrict at least one guild or channel.");
+  }
   return scope;
 }
 
@@ -90,7 +93,7 @@ export function resolveDiscordScope(scopes = {}, name) {
 
 export function scopeAllowsChannel(scope, { guildId = null, channelId = null, parentId = null } = {}) {
   if (!scope) return false;
-  if (scope.guildIds.length && guildId && !scope.guildIds.includes(String(guildId))) return false;
+  if (scope.guildIds.length && !scope.guildIds.includes(String(guildId || ""))) return false;
   if (!scope.channelIds.length) return true;
   return scope.channelIds.includes(String(channelId || "")) ||
     (Boolean(parentId) && scope.channelIds.includes(String(parentId)));

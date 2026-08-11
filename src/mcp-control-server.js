@@ -271,9 +271,9 @@ const TOOL_CATALOG = Object.freeze([
     name: "set_behavior_mode",
     category: "behavior",
     safety: "runtime-write",
-    description: "Set manual, observe, auto, or quiet globally, for a guild, or for a channel.",
+    description: "Set manual, observe, auto, or maintenance globally, for a guild, or for a channel.",
     arguments: {
-      mode: "manual, observe, auto, or quiet.",
+      mode: "manual, observe, auto, or maintenance. quiet remains a legacy alias.",
       guildId: "Optional Discord guild/server ID.",
       channelId: "Optional Discord channel ID.",
       durationMinutes: "Optional expiry duration from now.",
@@ -932,10 +932,6 @@ function createMcpServer({
       await audit("rejected", { error: "channel_required" });
       return textResult({ ok: false, error: "channelId is required because the scope has no defaultChannelId." });
     }
-    if (!scopeAllowsChannel(configuredScope, { channelId: targetChannelId })) {
-      await audit("rejected", { channelId: targetChannelId, error: "channel_not_in_scope" });
-      return textResult({ ok: false, error: "Channel is not in scope." });
-    }
     const channel = client.channels.cache.get(targetChannelId) ||
       await client.channels.fetch(targetChannelId).catch(() => null);
     if (!channel) {
@@ -986,7 +982,7 @@ function createMcpServer({
   ));
 
   server.tool("set_behavior_mode", "Set a behavior mode globally, for a guild, or for a channel.", {
-    mode: z.enum(["manual", "observe", "auto", "quiet"]),
+    mode: z.enum(["manual", "observe", "auto", "maintenance", "quiet"]),
     guildId: z.string().optional(),
     channelId: z.string().optional(),
     durationMinutes: z.number().int().min(1).max(10_080).optional(),
@@ -1224,7 +1220,7 @@ export function startMcpControlServer({
 }) {
   if (!config.mcpControl?.enabled) return null;
   if (!behaviorModeController?.enabled) {
-    throw new Error("MCP control requires BEHAVIOR_MODE_ENABLED=true.");
+    throw new Error("MCP control requires the unified behavior policy.");
   }
   const token = String(config.mcpControl.bearerToken || "").trim();
   if (!token) throw new Error("MCP control requires MCP_CONTROL_BEARER_TOKEN.");

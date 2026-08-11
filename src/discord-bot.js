@@ -414,14 +414,16 @@ function messageScope(message) {
 
 function allowsBehaviorReply(
   behaviorModeController,
+  runtimeControl,
   message,
   ownerAuthorized,
   { spontaneous = false } = {},
 ) {
-  if (!behaviorModeController?.enabled) return true;
+  if (!behaviorModeController?.enabled) {
+    return allowsReplyDuringQuietModes(runtimeControl, ownerAuthorized, { spontaneous });
+  }
   const scope = messageScope(message);
-  if (spontaneous) return behaviorModeController.allowsSpontaneousReply(scope);
-  return ownerAuthorized || behaviorModeController.allowsNonOwnerReply(scope);
+  return behaviorModeController.allowsReply(scope, { ownerAuthorized, spontaneous });
 }
 
 function xPostBlock(observation) {
@@ -627,9 +629,9 @@ async function sendDiscreetResponse(message, content, logger = console) {
   }
 }
 
-async function forceDigest(memoryDigester, channelId, logger = console) {
+async function forceDigest(memoryDigester, channelId, guildId = null, logger = console) {
   if (!memoryDigester) return "Passive capture is not configured on this host.";
-  if (!memoryDigester.capturing?.()) {
+  if (!memoryDigester.capturing?.({ guildId, channelId })) {
     return "Nothing is being captured right now. Capture runs in observation mode.";
   }
   try {
@@ -720,14 +722,14 @@ export function createDiscordBot({
   client.on(Events.MessageCreate, async (message) => {
     const runtimeCommand = runtimeControl ? parseRuntimeControlCommand(message.content) : null;
     const parsedMemoryCommand = memoryStore ? parseMemoryCommand(message.content) : null;
-    const runtimeOwnerAuthorized = runtimeControl
-      ? isRuntimeControlAuthorized(message.author, config, "status")
-      : false;
     const runtimeAuthorized = runtimeCommand
       ? isRuntimeControlAuthorized(message.author, config, runtimeCommand.action)
       : false;
     const ownerAuthorized =
       participationController?.isOwner(message.author, config) || isOwnerIdentity(message.author, config);
+    const policyOwnerAuthorized = runtimeControl
+      ? isRuntimeControlAuthorized(message.author, config, "status")
+      : ownerAuthorized;
     // Capture runs before the reply gate on purpose: observation mode is silent for
     // everyone but the owner, yet it still distils memory from the room. Control
     // commands are not conversation, so they never enter the transcript.
@@ -743,16 +745,17 @@ export function createDiscordBot({
         logger.error("Failed to observe a message for memory", error);
       }
     }
-    if (!allowsReplyDuringQuietModes(runtimeControl, runtimeOwnerAuthorized)) return;
-    if (!allowsBehaviorReply(behaviorModeController, message, ownerAuthorized)) return;
+    if (!allowsBehaviorReply(
+      behaviorModeController,
+      runtimeControl,
+      message,
+      policyOwnerAuthorized,
+    )) return;
     const trigger = await resolveResponseTrigger(message, client, config, participationController);
     const directResponse = trigger.directResponse;
     const spontaneous =
       !directResponse &&
-      allowsReplyDuringQuietModes(runtimeControl, runtimeOwnerAuthorized, {
-        spontaneous: true,
-      }) &&
-      allowsBehaviorReply(behaviorModeController, message, ownerAuthorized, {
+      allowsBehaviorReply(behaviorModeController, runtimeControl, message, policyOwnerAuthorized, {
         spontaneous: true,
       }) &&
       isSpontaneousCandidate(message, client, config) &&
@@ -801,7 +804,12 @@ export function createDiscordBot({
         return;
       }
       if (memoryCommand.action === "digest") {
-        const digestResponse = await forceDigest(memoryDigester, message.channelId, logger);
+        const digestResponse = await forceDigest(
+          memoryDigester,
+          message.channelId,
+          message.guildId,
+          logger,
+        );
         if (runtimeControl?.observationEnabled) {
           await sendDiscreetResponse(message, digestResponse, logger);
         } else {
@@ -931,8 +939,7 @@ export function createDiscordBot({
         // can be enabled from another channel after this turn was admitted. Re-check
         // before spending inference and again before speaking.
         const maintenanceSilenced = () =>
-          !allowsReplyDuringQuietModes(runtimeControl, runtimeOwnerAuthorized, { spontaneous }) ||
-          !allowsBehaviorReply(behaviorModeController, message, ownerAuthorized, {
+          !allowsBehaviorReply(behaviorModeController, runtimeControl, message, policyOwnerAuthorized, {
             spontaneous,
           });
         if (maintenanceSilenced()) {

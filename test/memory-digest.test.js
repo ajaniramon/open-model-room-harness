@@ -50,7 +50,10 @@ function message(overrides = {}) {
   };
 }
 
-async function withDigester(run, { config = digestConfig(), runtimeControl, complete } = {}) {
+async function withDigester(
+  run,
+  { config = digestConfig(), runtimeControl, behaviorModeController, complete } = {},
+) {
   const root = await mkdtemp(join(tmpdir(), "memory-digest-"));
   const calls = [];
   try {
@@ -65,6 +68,7 @@ async function withDigester(run, { config = digestConfig(), runtimeControl, comp
       },
       config,
       runtimeControl: runtimeControl ?? { observationEnabled: true, maintenanceEnabled: false },
+      behaviorModeController,
       logger: { info: () => undefined, error: () => undefined },
       now: () => NOW,
     });
@@ -221,5 +225,27 @@ test("capture mode 'always' works without observation mode", async () => {
       config: digestConfig({ memoryExtractionCaptureMode: "always" }),
       runtimeControl: { observationEnabled: false, maintenanceEnabled: false },
     },
+  );
+});
+
+test("uses the unified scoped policy for memory capture", async () => {
+  const calls = [];
+  const behaviorModeController = {
+    enabled: true,
+    allowsMemoryCapture: (scope, captureMode) => {
+      calls.push({ scope, captureMode });
+      return scope.guildId === "g1" && scope.channelId === "c1";
+    },
+  };
+  await withDigester(
+    async ({ digester }) => {
+      assert.equal(digester.observe(message(), "bot"), true);
+      assert.equal(digester.observe(message({ id: "m2", channelId: "c2" }), "bot"), false);
+      assert.deepEqual(calls, [
+        { scope: { guildId: "g1", channelId: "c1" }, captureMode: "observation" },
+        { scope: { guildId: "g1", channelId: "c2" }, captureMode: "observation" },
+      ]);
+    },
+    { behaviorModeController },
   );
 });

@@ -37,6 +37,13 @@ test("rejects unsafe scope names", () => {
   assert.throws(() => validateScopeName("../oops"), /scope/);
 });
 
+test("rejects send-enabled scopes without a guild or channel boundary", () => {
+  assert.throws(
+    () => normalizeDiscordScopes({ everywhere: { allowSend: true } }),
+    /must restrict at least one guild or channel/,
+  );
+});
+
 test("checks guild, channel, and thread parent scope membership", () => {
   const scope = resolveDiscordScope({
     lounge: {
@@ -48,5 +55,6 @@ test("checks guild, channel, and thread parent scope membership", () => {
   assert.equal(scopeAllowsChannel(scope, { guildId: "guild-1", channelId: "channel-1" }), true);
   assert.equal(scopeAllowsChannel(scope, { guildId: "guild-1", channelId: "thread-1", parentId: "channel-1" }), true);
   assert.equal(scopeAllowsChannel(scope, { guildId: "guild-2", channelId: "channel-1" }), false);
+  assert.equal(scopeAllowsChannel(scope, { guildId: null, channelId: "channel-1" }), false);
   assert.equal(scopeAllowsChannel(scope, { guildId: "guild-1", channelId: "channel-2" }), false);
 });

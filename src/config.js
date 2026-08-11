@@ -83,6 +83,7 @@ const spontaneousMaxMessages = integer("JJ_SPONTANEOUS_MAX_MESSAGES", 24, { min:
 if (spontaneousMaxMessages < spontaneousMinMessages) {
   throw new Error("JJ_SPONTANEOUS_MAX_MESSAGES must be at least JJ_SPONTANEOUS_MIN_MESSAGES");
 }
+const spontaneousParticipationEnabled = enabled("JJ_SPONTANEOUS_ENABLED", true);
 
 const behaviorModeEnabled = configuredBoolean(
   "behaviorMode.enabled",
@@ -98,6 +99,11 @@ const behaviorModeDefault = String(
 )
   .trim()
   .toLowerCase();
+const unifiedBehaviorModeDefault = behaviorModeEnabled
+  ? behaviorModeDefault
+  : spontaneousParticipationEnabled
+    ? "auto"
+    : "manual";
 const behaviorModeAutoCooldownSeconds = configuredInteger(
   "behaviorMode.auto.cooldownSeconds",
   "BEHAVIOR_MODE_AUTO_COOLDOWN_SECONDS",
@@ -508,8 +514,10 @@ export const config = Object.freeze({
     maxValueChars: 10_000,
   }),
   behaviorMode: Object.freeze({
-    enabled: behaviorModeEnabled,
-    defaultMode: behaviorModeDefault,
+    // Runtime control, scoped behavior and memory capture now share this one policy.
+    // Legacy deployments map their spontaneous setting to auto/manual by default.
+    enabled: true,
+    defaultMode: unifiedBehaviorModeDefault,
     statePath: resolve(
       projectRoot,
       String(
@@ -708,7 +716,7 @@ export const config = Object.freeze({
     includeBodies: false,
     maxValueChars: 10_000,
   }),
-  spontaneousEnabled: enabled("JJ_SPONTANEOUS_ENABLED", true),
+  spontaneousEnabled: spontaneousParticipationEnabled,
   spontaneousMinMessages,
   spontaneousMaxMessages,
   spontaneousCooldownMs:

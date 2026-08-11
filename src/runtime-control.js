@@ -1,6 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
-import { randomBytes } from "node:crypto";
+import { readFile } from "node:fs/promises";
 
 function normalizedCommand(content) {
   return String(content || "")
@@ -53,7 +51,7 @@ export function isRuntimeControlAuthorized(author, config, action) {
   return config.ownerUsernames.has(username);
 }
 
-// Both quiet modes make the bot owner-only. The owner keeps direct replies, but organic
+// Both silent modes make the bot owner-only. The owner keeps direct replies, but organic
 // participation is discarded even for the owner: it speaks to the whole channel, so it
 // is not an owner-only reply. The modes differ only in what happens off-microphone:
 // maintenance freezes everything, observation keeps passive memory capture running.
@@ -88,27 +86,55 @@ function formatUptime(milliseconds) {
 export class RuntimeControl {
   constructor({
     statePath,
+    behaviorModeController = null,
     auditLogger = null,
     restartEnabled = false,
     now = Date.now,
     startedAt = Date.now(),
   }) {
     this.statePath = statePath;
+    this.behaviorModeController = behaviorModeController;
     this.auditLogger = auditLogger;
     this.restartEnabled = restartEnabled;
     this.now = now;
     this.startedAt = startedAt;
-    this.maintenanceEnabled = false;
-    this.observationEnabled = false;
     this.updatedAt = null;
   }
 
+  get mode() {
+    return this.behaviorModeController?.resolve?.({})?.mode || "manual";
+  }
+
+  get maintenanceEnabled() {
+    return this.mode === "maintenance";
+  }
+
+  get observationEnabled() {
+    return this.mode === "observe";
+  }
+
   async load() {
+    if (!this.behaviorModeController) return this;
+    // The behavior state is authoritative once it exists. Import the legacy
+    // runtime-control file only on the first unified-policy startup.
+    try {
+      await readFile(this.behaviorModeController.statePath, "utf8");
+      return this;
+    } catch (error) {
+      if (error.code !== "ENOENT") {
+        console.warn(`Could not inspect unified runtime policy state: ${error.message || error}`);
+        return this;
+      }
+    }
     try {
       const payload = JSON.parse(await readFile(this.statePath, "utf8"));
-      this.maintenanceEnabled = payload.maintenanceEnabled === true;
-      this.observationEnabled = payload.observationEnabled === true;
       this.updatedAt = typeof payload.updatedAt === "string" ? payload.updatedAt : null;
+      const mode = payload.maintenanceEnabled === true
+        ? "maintenance"
+        : payload.observationEnabled === true
+          ? "observe"
+          : this.behaviorModeController.defaultMode;
+      await this.behaviorModeController.setMode({ mode }, { source: "legacy_runtime_migration" });
     } catch (error) {
       if (error.code !== "ENOENT") {
         console.warn(`Could not load runtime control state: ${error.message || error}`);
@@ -118,23 +144,43 @@ export class RuntimeControl {
   }
 
   async setObservation(enabled, context = {}) {
-    this.observationEnabled = enabled === true;
-    if (this.observationEnabled) this.maintenanceEnabled = false;
+    this.#requirePolicy();
+    if (enabled === true) {
+      await this.behaviorModeController.setMode(
+        { mode: "observe" },
+        { ...context, source: context.source || "runtime_control" },
+      );
+    } else if (this.observationEnabled) {
+      await this.behaviorModeController.clearMode(
+        {},
+        { ...context, source: context.source || "runtime_control" },
+      );
+    }
     this.updatedAt = new Date(this.now()).toISOString();
-    await this.#persist();
     await this.#audit("runtime_observation_changed", context, {
       observationEnabled: this.observationEnabled,
+      mode: this.mode,
     });
     return this.observationEnabled;
   }
 
   async setMaintenance(enabled, context = {}) {
-    this.maintenanceEnabled = enabled === true;
-    if (this.maintenanceEnabled) this.observationEnabled = false;
+    this.#requirePolicy();
+    if (enabled === true) {
+      await this.behaviorModeController.setMode(
+        { mode: "maintenance" },
+        { ...context, source: context.source || "runtime_control" },
+      );
+    } else if (this.maintenanceEnabled) {
+      await this.behaviorModeController.clearMode(
+        {},
+        { ...context, source: context.source || "runtime_control" },
+      );
+    }
     this.updatedAt = new Date(this.now()).toISOString();
-    await this.#persist();
     await this.#audit("runtime_maintenance_changed", context, {
       maintenanceEnabled: this.maintenanceEnabled,
+      mode: this.mode,
     });
     return this.maintenanceEnabled;
   }
@@ -165,11 +211,7 @@ export class RuntimeControl {
     }
     if (command.action === "status") {
       await this.#audit("runtime_status_requested", context, {});
-      const state = this.maintenanceEnabled
-        ? "maintenance"
-        : this.observationEnabled
-          ? "observation"
-          : "active";
+      const state = this.mode;
       const restart = this.restartEnabled ? "enabled" : "disabled";
       return {
         response: `[runtime status] State: ${state}. Model: ${context.model || "configured provider"}. Uptime: ${formatUptime(this.now() - this.startedAt)}. Supervised restart: ${restart}.`,
@@ -204,23 +246,10 @@ export class RuntimeControl {
     await this.auditLogger?.close();
   }
 
-  async #persist() {
-    await mkdir(dirname(this.statePath), { recursive: true });
-    const temporaryPath = `${this.statePath}.${process.pid}.${randomBytes(5).toString("hex")}.tmp`;
-    await writeFile(
-      temporaryPath,
-      `${JSON.stringify(
-        {
-          maintenanceEnabled: this.maintenanceEnabled,
-          observationEnabled: this.observationEnabled,
-          updatedAt: this.updatedAt,
-        },
-        null,
-        2,
-      )}\n`,
-      { encoding: "utf8", mode: 0o600 },
-    );
-    await rename(temporaryPath, this.statePath);
+  #requirePolicy() {
+    if (!this.behaviorModeController?.enabled) {
+      throw new Error("Unified runtime policy is not configured.");
+    }
   }
 
   async #audit(type, context, details) {

@@ -68,24 +68,52 @@ function configuredList(jsonConfig, path, environmentName, fallback = []) {
 
 const configPath = resolve(projectRoot, "config.json");
 const jsonConfig = loadJsonConfig(configPath);
+const legacyBehaviorEnabled = configuredBoolean(
+  jsonConfig,
+  "behaviorMode.enabled",
+  "BEHAVIOR_MODE_ENABLED",
+  false,
+);
+const defaultBehaviorMode = legacyBehaviorEnabled
+  ? String(configured(jsonConfig, "behaviorMode.defaultMode", "BEHAVIOR_MODE_DEFAULT", "manual"))
+  : boolean("JJ_SPONTANEOUS_ENABLED", true)
+    ? "auto"
+    : "manual";
 
 const behaviorModeController = await new BehaviorModeController({
   settings: {
-    enabled: boolean("BEHAVIOR_MODE_ENABLED", true),
-    defaultMode: process.env.BEHAVIOR_MODE_DEFAULT || "manual",
+    enabled: true,
+    defaultMode: defaultBehaviorMode,
     statePath: resolve(
       projectRoot,
-      process.env.BEHAVIOR_MODE_STATE_PATH || "state/behavior-mode.json",
+      String(configured(
+        jsonConfig,
+        "behaviorMode.statePath",
+        "BEHAVIOR_MODE_STATE_PATH",
+        "state/behavior-mode.json",
+      )),
     ),
     auto: {
-      cooldownSeconds: integer("BEHAVIOR_MODE_AUTO_COOLDOWN_SECONDS", 180, {
-        min: 0,
-        max: 86_400,
-      }),
-      maxRepliesPerHour: integer("BEHAVIOR_MODE_AUTO_MAX_REPLIES_PER_HOUR", 8, {
-        min: 0,
-        max: 500,
-      }),
+      cooldownSeconds: configuredInteger(
+        jsonConfig,
+        "behaviorMode.auto.cooldownSeconds",
+        "BEHAVIOR_MODE_AUTO_COOLDOWN_SECONDS",
+        180,
+        {
+          min: 0,
+          max: 86_400,
+        },
+      ),
+      maxRepliesPerHour: configuredInteger(
+        jsonConfig,
+        "behaviorMode.auto.maxRepliesPerHour",
+        "BEHAVIOR_MODE_AUTO_MAX_REPLIES_PER_HOUR",
+        8,
+        {
+          min: 0,
+          max: 500,
+        },
+      ),
     },
   },
 }).load();
@@ -133,6 +161,7 @@ const runtimeControl = await new RuntimeControl({
     projectRoot,
     String(configured(jsonConfig, "runtimeControl.statePath", "JJ_RUNTIME_CONTROL_STATE_PATH", "state/runtime-control.json")),
   ),
+  behaviorModeController,
   restartEnabled: configuredBoolean(
     jsonConfig,
     "runtimeControl.restartEnabled",

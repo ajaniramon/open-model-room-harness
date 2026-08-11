@@ -71,18 +71,19 @@ const participationController = await new ParticipationController({
   auditLogger: participationAuditLogger,
 }).load();
 const runtimeControlAuditLogger = new JsonlRequestLogger(config.runtimeControlAudit);
-const runtimeControl = config.runtimeControlEnabled
-  ? await new RuntimeControl({
-      statePath: config.runtimeControlStatePath,
-      auditLogger: runtimeControlAuditLogger,
-      restartEnabled: config.runtimeControlRestartEnabled,
-    }).load()
-  : null;
 const behaviorModeController = await new BehaviorModeController({
   settings: config.behaviorMode,
   statePath: config.behaviorMode.statePath,
   auditLogger: runtimeControlAuditLogger,
 }).load();
+const runtimeControl = config.runtimeControlEnabled
+  ? await new RuntimeControl({
+      statePath: config.runtimeControlStatePath,
+      behaviorModeController,
+      auditLogger: runtimeControlAuditLogger,
+      restartEnabled: config.runtimeControlRestartEnabled,
+    }).load()
+  : null;
 await behaviorModeController.startWatching();
 const memoryAuditLogger = new JsonlRequestLogger(config.memoryAudit);
 const memoryStore = config.memoryEnabled

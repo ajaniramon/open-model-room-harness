@@ -25,12 +25,18 @@ export class ChatRelayQueue {
     maxItems = 50,
     maxContextChars = 12_000,
     now = Date.now,
+    logger = console,
+    setTimer = setTimeout,
+    clearTimer = clearTimeout,
   } = {}) {
     this.enabled = enabled === true;
     this.ttlMs = Math.max(1_000, Number(ttlMs) || 10 * 60_000);
     this.maxItems = Math.max(1, Math.min(Number(maxItems) || 50, 500));
     this.maxContextChars = Math.max(500, Math.min(Number(maxContextChars) || 12_000, 100_000));
     this.now = now;
+    this.logger = logger;
+    this.setTimer = setTimer;
+    this.clearTimer = clearTimer;
     this.items = new Map();
   }
 
@@ -83,8 +89,15 @@ export class ChatRelayQueue {
       onDismiss,
     };
     this.items.set(id, item);
+    item.expiryTimer = this.setTimer(() => {
+      if (!this.#remove(item)) return;
+      void this.#notifyDismiss(item, "expired");
+    }, this.ttlMs);
+    item.expiryTimer?.unref?.();
     while (this.items.size > this.maxItems) {
-      this.items.delete(this.items.keys().next().value);
+      const oldest = this.items.get(this.items.keys().next().value);
+      this.#remove(oldest);
+      void this.#notifyDismiss(oldest, "evicted");
     }
     return id;
   }
@@ -107,8 +120,17 @@ export class ChatRelayQueue {
     const content = String(reply || "").trim();
     if (!content) return { ok: false, error: "Reply must not be empty." };
     if (content.length > 8_000) return { ok: false, error: "Reply is too long." };
-    this.items.delete(item.id);
-    await item.onReply?.(content);
+    this.#remove(item);
+    try {
+      if (typeof item.onReply !== "function") {
+        throw new Error("Relay item has no reply handler.");
+      }
+      await item.onReply(content);
+    } catch (error) {
+      await this.#notifyDismiss(item, "reply_failed");
+      this.logger?.error?.("Chat relay reply delivery failed", error);
+      return { ok: false, error: "Relay reply could not be delivered." };
+    }
     return { ok: true, id: item.id, channelId: item.channelId, messageId: item.messageId };
   }
 
@@ -116,8 +138,8 @@ export class ChatRelayQueue {
     this.sweep();
     const item = this.items.get(String(id || ""));
     if (!item) return { ok: false, error: "Relay item was not found or expired." };
-    this.items.delete(item.id);
-    await item.onDismiss?.(String(reason || "").slice(0, 500));
+    this.#remove(item);
+    await this.#notifyDismiss(item, String(reason || "").slice(0, 500));
     return { ok: true, id: item.id };
   }
 
@@ -125,9 +147,23 @@ export class ChatRelayQueue {
     const now = this.now();
     for (const item of this.items.values()) {
       if (Date.parse(item.expiresAt) <= now) {
-        this.items.delete(item.id);
-        item.onDismiss?.("expired");
+        this.#remove(item);
+        void this.#notifyDismiss(item, "expired");
       }
+    }
+  }
+
+  #remove(item) {
+    if (!item || !this.items.delete(item.id)) return false;
+    this.clearTimer(item.expiryTimer);
+    return true;
+  }
+
+  async #notifyDismiss(item, reason) {
+    try {
+      await item.onDismiss?.(reason);
+    } catch (error) {
+      this.logger?.error?.(`Chat relay dismissal failed reason=${reason}`, error);
     }
   }
 
