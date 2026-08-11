@@ -405,14 +405,40 @@ turns instead of posting the provider-disabled test message:
 
 ```dotenv
 CHAT_RELAY_ENABLED=true
+CHAT_RELAY_STATE_PATH=state/chat-relay.json
 CHAT_RELAY_TTL_SECONDS=600
 CHAT_RELAY_MAX_ITEMS=50
+CHAT_RELAY_LEASE_SECONDS=120
+CHAT_RELAY_MAX_ATTEMPTS=3
 ```
 
 The harness still owns Discord events, scope checks, cooldowns, and participation
-reservations. ChatGPT can inspect queued items with `get_pending_chat_relay` /
-`get_chat_relay_item`, then answer only that queued event through
-`submit_chat_relay_reply`. This is not a raw Discord send tool.
+reservations. Relay items are persisted and recovered after a restart. A scheduled
+ChatGPT task should claim work with `claim_chat_relay_items`, inspect each item with
+`get_chat_relay_item`, then complete it with `complete_chat_relay_item` or dismiss it
+with `dismiss_chat_relay_item`. Claims have expiring leases so overlapping task runs
+cannot answer the same Discord message. This is not a raw Discord send tool.
+
+Create the task inside Gremy's existing ChatGPT conversation with a minute-based
+schedule and this durable prompt:
+
+```text
+Every minute, check the Discord relay queue.
+
+Use claim_chat_relay_items with workerId "scheduled-gremy", limit 3, and includeContext true.
+If no items are returned, finish without a user-facing report.
+
+For each claimed item:
+1. Read the item and its context with get_chat_relay_item.
+2. Decide whether a reply is appropriate using the existing conversation policy.
+3. Use complete_chat_relay_item with the returned leaseToken to answer, or
+   dismiss_chat_relay_item with the leaseToken when no reply is appropriate.
+4. If processing takes longer than the lease, renew it before completing.
+
+Never use arbitrary Discord send tools for relay replies.
+Do not invent missing context or retry a completed item.
+Only report a problem in ChatGPT when the relay tools fail repeatedly or require intervention.
+```
 
 Relay items include both stable IDs and human-readable context such as
 `guildName`, `channelName`, `scope`, and `isDM` so external chat providers can

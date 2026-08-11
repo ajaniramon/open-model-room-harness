@@ -698,6 +698,36 @@ export function createDiscordBot({
   const channelQueues = new Map();
   const spontaneousGate = new SpontaneousGate(config);
 
+  // Items loaded from the durable relay store no longer have the original
+  // in-memory callback. Reconstruct delivery from Discord IDs after restart.
+  chatRelay?.setDeliveryHandlers?.({
+    onReply: async (item, content) => {
+      const ownerAuthorized = runtimeControl
+        ? isRuntimeControlAuthorized(
+            { id: item.author?.id, username: item.author?.username },
+            config,
+            "status",
+          )
+        : isOwnerIdentity({ id: item.author?.id, username: item.author?.username }, config);
+      if (
+        behaviorModeController?.enabled &&
+        !behaviorModeController.allowsReply(
+          { guildId: item.guildId, channelId: item.channelId },
+          { ownerAuthorized, spontaneous: item.spontaneous === true },
+        )
+      ) {
+        throw new Error("Current behavior mode no longer permits this relay reply.");
+      }
+      const channel = await client.channels.fetch(item.channelId);
+      const original = item.messageId && channel.messages?.fetch
+        ? await channel.messages.fetch(item.messageId).catch(() => null)
+        : null;
+      const payload = { content: content.slice(0, DISCORD_MESSAGE_LIMIT * 10), allowedMentions: { parse: [] } };
+      if (original?.reply) await original.reply(payload);
+      else await channel.send(payload);
+    },
+  });
+
   client.once(Events.ClientReady, (readyClient) => {
     logger.info(
       `JJ connected as ${readyClient.user.tag}; provider=${config.chatProvider}; model=${config.chatModel}; spontaneous=${config.spontaneousEnabled}`,

@@ -623,14 +623,17 @@ test("MCP control server exposes tool discovery metadata", async () => {
         includeArguments: true,
       })).result.content[0].text,
     );
-    assert.equal(discovered.total, 4);
+    assert.equal(discovered.total, 7);
     assert.ok(discovered.categories.includes("discovery"));
     assert.deepEqual(
       discovered.tools.map((tool) => tool.name),
       [
         "get_pending_chat_relay",
+        "claim_chat_relay_items",
         "get_chat_relay_item",
         "submit_chat_relay_reply",
+        "renew_chat_relay_lease",
+        "complete_chat_relay_item",
         "dismiss_chat_relay_item",
       ],
     );
@@ -806,13 +809,21 @@ test("MCP control server can inspect and submit chat relay items", async () => {
     enabled: true,
     size: 1,
     pending: () => [{ id: "relay-1", triggerText: "hello" }],
+    claim: async (args) => {
+      calls.push(["claim", args.workerId, args.limit]);
+      return [{ id: "relay-1", leaseToken: "lease-1" }];
+    },
     get: () => ({ id: "relay-1", context: [{ role: "user", content: "hello" }] }),
-    submit: async (id, reply) => {
-      calls.push(["submit", id, reply]);
+    submit: async (id, reply, leaseToken) => {
+      calls.push(["submit", id, reply, leaseToken]);
       return { ok: true, id };
     },
-    dismiss: async (id, reason) => {
-      calls.push(["dismiss", id, reason]);
+    renewLease: async (id, leaseToken) => {
+      calls.push(["renew", id, leaseToken]);
+      return { ok: true, id };
+    },
+    dismiss: async (id, reason, leaseToken) => {
+      calls.push(["dismiss", id, reason, leaseToken]);
       return { ok: true, id };
     },
   };
@@ -824,15 +835,19 @@ test("MCP control server can inspect and submit chat relay items", async () => {
       (await callTool(port, "get_pending_chat_relay")).result.content[0].text,
     );
     assert.equal(pending[0].id, "relay-1");
+    await callTool(port, "claim_chat_relay_items", { workerId: "test-worker", limit: 1 });
     const item = JSON.parse(
       (await callTool(port, "get_chat_relay_item", { id: "relay-1" })).result.content[0].text,
     );
     assert.equal(item.context[0].content, "hello");
-    await callTool(port, "submit_chat_relay_reply", { id: "relay-1", reply: "hi" });
-    await callTool(port, "dismiss_chat_relay_item", { id: "relay-1", reason: "skip" });
+    await callTool(port, "submit_chat_relay_reply", { id: "relay-1", reply: "hi", leaseToken: "lease-1" });
+    await callTool(port, "renew_chat_relay_lease", { id: "relay-1", leaseToken: "lease-1" });
+    await callTool(port, "dismiss_chat_relay_item", { id: "relay-1", reason: "skip", leaseToken: "lease-1" });
     assert.deepEqual(calls, [
-      ["submit", "relay-1", "hi"],
-      ["dismiss", "relay-1", "skip"],
+      ["claim", "test-worker", 1],
+      ["submit", "relay-1", "hi", "lease-1"],
+      ["renew", "relay-1", "lease-1"],
+      ["dismiss", "relay-1", "skip", "lease-1"],
     ]);
   } finally {
     await server.close();

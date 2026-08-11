@@ -544,6 +544,10 @@ export const config = Object.freeze({
   }),
   chatRelay: Object.freeze({
     enabled: configuredBoolean("chatRelay.enabled", "CHAT_RELAY_ENABLED", false),
+    statePath: resolve(
+      projectRoot,
+      String(configured("chatRelay.statePath", "CHAT_RELAY_STATE_PATH", "state/chat-relay.json")),
+    ),
     ttlMs: configuredInteger("chatRelay.ttlSeconds", "CHAT_RELAY_TTL_SECONDS", 600, {
       min: 5,
       max: 86_400,
@@ -558,6 +562,14 @@ export const config = Object.freeze({
       12_000,
       { min: 500, max: 100_000 },
     ),
+    leaseSeconds: configuredInteger("chatRelay.leaseSeconds", "CHAT_RELAY_LEASE_SECONDS", 120, {
+      min: 10,
+      max: 3_600,
+    }),
+    maxAttempts: configuredInteger("chatRelay.maxAttempts", "CHAT_RELAY_MAX_ATTEMPTS", 3, {
+      min: 1,
+      max: 20,
+    }),
   }),
   // Memory is OFF by default. It stores content from a shared room, so an operator
   // has to switch it on deliberately and take on the obligations in README §Memory.

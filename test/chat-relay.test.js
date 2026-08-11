@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { ChatRelayQueue } from "../src/chat-relay.js";
 
@@ -122,6 +125,7 @@ test("releases a relay reservation when reply delivery fails", async () => {
   const errors = [];
   const queue = new ChatRelayQueue({
     enabled: true,
+    maxAttempts: 1,
     logger: { error: (...args) => errors.push(args) },
   });
   const id = queue.enqueue({
@@ -140,4 +144,48 @@ test("releases a relay reservation when reply delivery fails", async () => {
   assert.equal(queue.size, 0);
   assert.deepEqual(dismissed, ["reply_failed"]);
   assert.equal(errors.length, 1);
+});
+
+test("persists pending items and recovers them after a restart", async () => {
+  const root = await mkdtemp(join(tmpdir(), "chat-relay-state-"));
+  const statePath = join(root, "chat-relay.json");
+  try {
+    const first = new ChatRelayQueue({ enabled: true, statePath });
+    const id = first.enqueue({ message: message(), context: [{ role: "user", content: "hello" }] });
+    await first.flush();
+
+    const second = await new ChatRelayQueue({ enabled: true, statePath }).load();
+    assert.equal(second.pending()[0].id, id);
+    assert.equal(second.get(id).context[0].content, "hello");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("claims relay items atomically and requires the lease token to complete them", async () => {
+  const sent = [];
+  const queue = new ChatRelayQueue({ enabled: true });
+  const id = queue.enqueue({ message: message(), context: [] });
+  const claimed = await queue.claim({ workerId: "scheduled-gremy", limit: 1 });
+  assert.equal(claimed.length, 1);
+  assert.equal(claimed[0].id, id);
+  assert.equal((await queue.claim({ workerId: "second-worker" })).length, 0);
+  assert.deepEqual(await queue.submit(id, "wrong worker", "invalid"), {
+    ok: false,
+    error: "Relay item is leased by another worker.",
+  });
+  queue.setDeliveryHandlers({ onReply: async (_item, reply) => sent.push(reply) });
+  assert.equal((await queue.submit(id, "answer", claimed[0].leaseToken)).ok, true);
+  assert.deepEqual(sent, ["answer"]);
+});
+
+test("requeues a claimed item after its lease expires", async () => {
+  let now = 1_000;
+  const queue = new ChatRelayQueue({ enabled: true, now: () => now });
+  queue.enqueue({ message: message(), context: [] });
+  const claimed = await queue.claim({ workerId: "worker", leaseSeconds: 10 });
+  assert.equal(claimed.length, 1);
+  now += 11_000;
+  assert.equal(queue.pending().length, 1);
+  assert.equal(queue.pending()[0].status, "pending");
 });

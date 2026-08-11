@@ -97,7 +97,7 @@ const memoryStore = config.memoryEnabled
     }).load()
   : null;
 const modelClient = new ModelClient(config, fetch, webTools);
-const chatRelay = new ChatRelayQueue(config.chatRelay);
+const chatRelay = await new ChatRelayQueue(config.chatRelay).load();
 const memoryDigester =
   memoryStore && config.memoryExtractionEnabled
     ? new MemoryDigester({
@@ -130,6 +130,7 @@ const shutdown = async (signal, exitCode = 0) => {
   shuttingDown = true;
   console.info(`Received ${signal}; disconnecting companion.`);
   client?.destroy();
+  await chatRelay?.flush();
   await participationController.close();
   await memoryDigester?.close();
   await memoryStore?.close();

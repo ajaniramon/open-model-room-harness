@@ -430,6 +430,18 @@ const TOOL_CATALOG = Object.freeze([
     },
   },
   {
+    name: "claim_chat_relay_items",
+    category: "chat-relay",
+    safety: "runtime-write",
+    description: "Atomically claim pending Discord turns for one external chat worker.",
+    arguments: {
+      workerId: "Stable worker identity.",
+      limit: "Maximum number of items to claim.",
+      leaseSeconds: "How long the claim remains owned.",
+      includeContext: "When true, include compacted Discord context.",
+    },
+  },
+  {
     name: "get_chat_relay_item",
     category: "chat-relay",
     safety: "read-only",
@@ -446,6 +458,29 @@ const TOOL_CATALOG = Object.freeze([
     arguments: {
       id: "Relay item ID.",
       reply: "Reply text to send through the Discord harness.",
+      leaseToken: "Lease token returned by claim_chat_relay_items.",
+    },
+  },
+  {
+    name: "renew_chat_relay_lease",
+    category: "chat-relay",
+    safety: "runtime-write",
+    description: "Extend ownership of a claimed Discord relay item.",
+    arguments: {
+      id: "Relay item ID.",
+      leaseToken: "Lease token returned by claim_chat_relay_items.",
+      leaseSeconds: "Additional lease duration.",
+    },
+  },
+  {
+    name: "complete_chat_relay_item",
+    category: "chat-relay",
+    safety: "runtime-write",
+    description: "Complete a claimed Discord relay item by delivering a reply.",
+    arguments: {
+      id: "Relay item ID.",
+      reply: "Reply text to send through the Discord harness.",
+      leaseToken: "Lease token returned by claim_chat_relay_items.",
     },
   },
   {
@@ -456,6 +491,7 @@ const TOOL_CATALOG = Object.freeze([
     arguments: {
       id: "Relay item ID.",
       reason: "Optional dismissal reason.",
+      leaseToken: "Lease token returned by claim_chat_relay_items.",
     },
   },
 ]);
@@ -605,7 +641,7 @@ function createMcpServer({
         },
         {
           goal: "Answer queued Discord turns through an external chat provider",
-          tools: ["get_pending_chat_relay", "get_chat_relay_item", "submit_chat_relay_reply"],
+          tools: ["claim_chat_relay_items", "get_chat_relay_item", "complete_chat_relay_item"],
         },
       ],
       notes: [
@@ -1053,6 +1089,8 @@ function createMcpServer({
         configured: Boolean(chatRelay),
         enabled: chatRelay?.enabled ?? false,
         pending: chatRelay?.size ?? null,
+        oldestPendingAgeSeconds: chatRelay?.oldestPendingAgeSeconds?.() ?? null,
+        leased: chatRelay?.leasedSize ?? null,
       },
       tools: {
         webConfigured: config.tavilyApiKey ? true : config.tavilyApiKey === "" ? false : null,
@@ -1180,6 +1218,17 @@ function createMcpServer({
   }, async ({ includeContext = false }) =>
     textResult(chatRelay?.pending?.({ includeContext }) || []));
 
+  server.tool("claim_chat_relay_items", "Atomically claim pending Discord turns for an external chat worker.", {
+    workerId: z.string().min(1).max(100),
+    limit: z.number().int().min(1).max(50).optional(),
+    leaseSeconds: z.number().int().min(10).max(3_600).optional(),
+    includeContext: z.boolean().optional(),
+  }, async ({ workerId, limit = 3, leaseSeconds, includeContext = true }) => textResult(
+    chatRelay
+      ? await chatRelay.claim({ workerId, limit, leaseSeconds, includeContext })
+      : [],
+  ));
+
   server.tool("get_chat_relay_item", "Get one pending Discord relay item including context.", {
     id: z.string(),
   }, async ({ id }) => textResult(chatRelay?.get?.(id, { includeContext: true }) || null));
@@ -1187,17 +1236,39 @@ function createMcpServer({
   server.tool("submit_chat_relay_reply", "Submit a reply for a pending Discord relay item.", {
     id: z.string(),
     reply: z.string().min(1).max(8_000),
-  }, async ({ id, reply }) =>
+    leaseToken: z.string().optional(),
+  }, async ({ id, reply, leaseToken }) =>
     textResult(chatRelay
-      ? await chatRelay.submit(id, reply)
+      ? await chatRelay.submit(id, reply, leaseToken)
       : { ok: false, error: "Chat relay is not configured." }));
+
+  server.tool("renew_chat_relay_lease", "Extend ownership of a claimed Discord relay item.", {
+    id: z.string(),
+    leaseToken: z.string().min(1),
+    leaseSeconds: z.number().int().min(10).max(3_600).optional(),
+  }, async ({ id, leaseToken, leaseSeconds }) => textResult(
+    chatRelay
+      ? await chatRelay.renewLease(id, leaseToken, leaseSeconds)
+      : { ok: false, error: "Chat relay is not configured." },
+  ));
+
+  server.tool("complete_chat_relay_item", "Complete a claimed Discord relay item by delivering a reply.", {
+    id: z.string(),
+    reply: z.string().min(1).max(8_000),
+    leaseToken: z.string().min(1),
+  }, async ({ id, reply, leaseToken }) => textResult(
+    chatRelay
+      ? await chatRelay.submit(id, reply, leaseToken)
+      : { ok: false, error: "Chat relay is not configured." },
+  ));
 
   server.tool("dismiss_chat_relay_item", "Dismiss a pending Discord relay item without replying.", {
     id: z.string(),
     reason: z.string().max(500).optional(),
-  }, async ({ id, reason = "" }) =>
+    leaseToken: z.string().optional(),
+  }, async ({ id, reason = "", leaseToken }) =>
     textResult(chatRelay
-      ? await chatRelay.dismiss(id, reason)
+      ? await chatRelay.dismiss(id, reason, leaseToken)
       : { ok: false, error: "Chat relay is not configured." }));
 
   return server;
