@@ -513,6 +513,10 @@ function resolveDiscordClient(discordClient) {
   return typeof discordClient === "function" ? discordClient() : discordClient;
 }
 
+function resolveDiscordWatchdog(discordWatchdog) {
+  return typeof discordWatchdog === "function" ? discordWatchdog() : discordWatchdog;
+}
+
 function discordReady(client) {
   return client?.isReady?.() === true || client?.readyAt instanceof Date;
 }
@@ -593,6 +597,7 @@ function createMcpServer({
   audioConfigured = false,
   chatRelay = null,
   discordClient = null,
+  discordWatchdog = null,
   getDiscordScopes = () => config.discordScopes || {},
   updateDiscordScopes = () => undefined,
   auditLogger = null,
@@ -653,6 +658,7 @@ function createMcpServer({
 
   server.tool("get_discord_connection_status", "Get safe Discord client status and bot identity.", {}, async () => {
     const client = resolveDiscordClient(discordClient);
+    const watchdog = resolveDiscordWatchdog(discordWatchdog);
     return textResult({
       configured: Boolean(client),
       ready: discordReady(client),
@@ -664,6 +670,10 @@ function createMcpServer({
           }
         : null,
       guilds: client?.guilds?.cache?.size ?? null,
+      watchdog: watchdog?.status?.() || {
+        enabled: false,
+        started: false,
+      },
     });
   });
 
@@ -1285,6 +1295,7 @@ export function startMcpControlServer({
   audioConfigured = false,
   chatRelay = null,
   discordClient = null,
+  discordWatchdog = null,
   auditLogger = null,
   requestRuntimeRestart = null,
   logger = console,
@@ -1353,6 +1364,7 @@ export function startMcpControlServer({
             audioConfigured,
             chatRelay,
             discordClient,
+            discordWatchdog,
             getDiscordScopes: () => discordScopes,
             updateDiscordScopes: (nextScopes) => {
               discordScopes = nextScopes;
@@ -1379,6 +1391,7 @@ export function startMcpControlServer({
             audioConfigured,
             chatRelay,
             discordClient,
+            discordWatchdog,
             getDiscordScopes: () => discordScopes,
             updateDiscordScopes: (nextScopes) => {
               discordScopes = nextScopes;
@@ -1411,6 +1424,7 @@ export function startMcpControlServer({
           audioConfigured,
           chatRelay,
           discordClient,
+          discordWatchdog,
           getDiscordScopes: () => discordScopes,
           updateDiscordScopes: (nextScopes) => {
             discordScopes = nextScopes;

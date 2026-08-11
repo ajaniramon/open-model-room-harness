@@ -513,6 +513,61 @@ request, and exits non-zero for the supervisor to relaunch. Restart never accept
 the username fallback. Control events are written without message bodies to a
 rotating `logs/runtime-control.jsonl` audit log.
 
+### Discord connectivity watchdog
+
+Discord.js normally reconnects on its own. An optional watchdog handles the case
+where the process remains alive but the Discord client stays unavailable. It listens
+for Discord connection events and performs a periodic readiness probe. After one
+continuous grace period it flushes state and exits with the configured supervised
+restart code. Repeated disconnect events do not extend the deadline.
+
+Enable it only when an external supervisor will relaunch the process:
+
+```dotenv
+DISCORD_WATCHDOG_ENABLED=true
+DISCORD_WATCHDOG_GRACE_SECONDS=90
+DISCORD_WATCHDOG_CHECK_INTERVAL_SECONDS=15
+```
+
+For a local Windows deployment, stop the manually launched harness and run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-supervised.ps1
+```
+
+Alternatively, double-click `start-supervised.bat` from Explorer. It invokes the
+same PowerShell supervisor and keeps an error window open when supervision stops.
+
+The wrapper restarts only the intentional exit code `75` and stops after more than
+five restart requests in ten minutes. Other exit codes remain visible instead of
+being hidden in a crash loop.
+
+On a VPS, use the host service manager. A minimal `systemd` service has the same
+ownership boundary:
+
+```ini
+[Unit]
+Description=Open Model Room Harness
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/open-model-room-harness
+ExecStart=/usr/bin/npm start
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Adjust the directory and executable path for the VPS. The watchdog state is exposed
+by `get_discord_connection_status`, including the last connection event, outage
+start time, and whether a restart has been requested.
+
 ## Private character prompt
 
 `src/system-prompt.txt` is intentionally excluded from this repository. Setup

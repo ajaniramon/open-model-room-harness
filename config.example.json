@@ -1,4 +1,11 @@
 {
+  "discord": {
+    "watchdog": {
+      "enabled": false,
+      "graceSeconds": 90,
+      "checkIntervalSeconds": 15
+    }
+  },
   "permissions": {
     "owner": {
       "allowedUserIds": [],

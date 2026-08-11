@@ -572,6 +572,21 @@ export const config = Object.freeze({
       max: 20,
     }),
   }),
+  discordWatchdog: Object.freeze({
+    enabled: configuredBoolean("discord.watchdog.enabled", "DISCORD_WATCHDOG_ENABLED", false),
+    graceMs: configuredInteger(
+      "discord.watchdog.graceSeconds",
+      "DISCORD_WATCHDOG_GRACE_SECONDS",
+      90,
+      { min: 10, max: 3_600 },
+    ) * 1_000,
+    checkIntervalMs: configuredInteger(
+      "discord.watchdog.checkIntervalSeconds",
+      "DISCORD_WATCHDOG_CHECK_INTERVAL_SECONDS",
+      15,
+      { min: 5, max: 300 },
+    ) * 1_000,
+  }),
   // Memory is OFF by default. It stores content from a shared room, so an operator
   // has to switch it on deliberately and take on the obligations in README §Memory.
   memoryEnabled: configuredBoolean("memory.enabled", "JJ_MEMORY_ENABLED", false),

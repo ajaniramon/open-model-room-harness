@@ -34,6 +34,7 @@ function createTestServer(overrides = {}) {
     audioConfigured: overrides.audioConfigured,
     chatRelay: overrides.chatRelay,
     discordClient: overrides.discordClient,
+    discordWatchdog: overrides.discordWatchdog,
     auditLogger: overrides.auditLogger,
     logger: { info: () => undefined, error: () => undefined },
   });
@@ -813,7 +814,15 @@ test("MCP control server exposes Discord guild and channel discovery", async () 
       fetch: async () => guild,
     },
   };
-  const server = createTestServer({ discordClient });
+  const discordWatchdog = {
+    status: () => ({
+      enabled: true,
+      started: true,
+      ready: true,
+      restartRequested: false,
+    }),
+  };
+  const server = createTestServer({ discordClient, discordWatchdog });
   try {
     await new Promise((resolve) => setTimeout(resolve, 25));
     const { port } = server.address();
@@ -822,6 +831,12 @@ test("MCP control server exposes Discord guild and channel discovery", async () 
     );
     assert.equal(status.ready, true);
     assert.equal(status.user.id, "bot-1");
+    assert.deepEqual(status.watchdog, {
+      enabled: true,
+      started: true,
+      ready: true,
+      restartRequested: false,
+    });
 
     const guilds = JSON.parse(
       (await callTool(port, "list_discord_guilds")).result.content[0].text,
