@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Chat Relay Wake Settings</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body class="options-page">
+    <main class="settings">
+      <header>
+        <h1>Chat Relay Wake</h1>
+        <p>Wake one ChatGPT task when the harness reports pending relay work.</p>
+      </header>
+
+      <form id="settings-form">
+        <label class="toggle-row">
+          <span>Enabled</span>
+          <input id="enabled" name="enabled" type="checkbox">
+        </label>
+
+        <label>
+          Harness status URL
+          <input id="statusUrl" name="statusUrl" type="url" required spellcheck="false">
+        </label>
+
+        <label>
+          Wake status token
+          <input id="wakeToken" name="wakeToken" type="password" autocomplete="off" spellcheck="false">
+        </label>
+
+        <label>
+          ChatGPT task URL
+          <input id="targetUrl" name="targetUrl" type="url" required placeholder="https://chatgpt.com/g/g-.../c/..." spellcheck="false">
+        </label>
+
+        <div class="two-columns">
+          <label>
+            Poll interval (minutes)
+            <input id="pollMinutes" name="pollMinutes" type="number" min="0.5" max="60" step="0.5">
+          </label>
+          <label>
+            Cooldown (seconds)
+            <input id="cooldownSeconds" name="cooldownSeconds" type="number" min="30" max="3600" step="1">
+          </label>
+        </div>
+
+        <label>
+          Unresolved retry schedule (minutes)
+          <input id="backoffScheduleMinutes" name="backoffScheduleMinutes" type="text" required placeholder="5, 15, 30, 60" spellcheck="false">
+        </label>
+
+        <label>
+          Wake prompt
+          <textarea id="wakePrompt" name="wakePrompt" rows="3"></textarea>
+        </label>
+
+        <label class="toggle-row">
+          <span>Submit wake prompt automatically</span>
+          <input id="autoSubmit" name="autoSubmit" type="checkbox">
+        </label>
+
+        <label class="toggle-row">
+          <span>Open the configured task when missing</span>
+          <input id="openIfMissing" name="openIfMissing" type="checkbox">
+        </label>
+
+        <div class="actions">
+          <button type="submit">Save</button>
+          <button id="test" type="button" class="secondary">Save and force check</button>
+        </div>
+        <output id="message" aria-live="polite"></output>
+      </form>
+    </main>
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

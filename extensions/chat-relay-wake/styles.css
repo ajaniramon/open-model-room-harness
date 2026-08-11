@@ -1,0 +1,207 @@
+:root {
+  color-scheme: light dark;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 14px;
+  color: #1b1d21;
+  background: #f6f7f8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.settings {
+  width: min(680px, calc(100% - 32px));
+  margin: 40px auto;
+}
+
+header {
+  border-bottom: 1px solid #d7dade;
+  margin-bottom: 24px;
+  padding-bottom: 18px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: 0;
+}
+
+p {
+  color: #5a6069;
+  line-height: 1.45;
+}
+
+form {
+  display: grid;
+  gap: 18px;
+}
+
+label {
+  display: grid;
+  gap: 7px;
+  font-weight: 600;
+}
+
+input,
+textarea,
+button {
+  font: inherit;
+}
+
+input[type="url"],
+input[type="password"],
+input[type="number"],
+input[type="text"],
+textarea {
+  width: 100%;
+  border: 1px solid #b9bec5;
+  border-radius: 6px;
+  background: #fff;
+  color: #1b1d21;
+  padding: 10px 11px;
+}
+
+textarea {
+  resize: vertical;
+}
+
+.two-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 34px;
+}
+
+.toggle-row input {
+  width: 18px;
+  height: 18px;
+}
+
+.actions {
+  display: flex;
+  gap: 9px;
+}
+
+button {
+  border: 1px solid #156a52;
+  border-radius: 6px;
+  background: #15765a;
+  color: #fff;
+  cursor: pointer;
+  min-height: 36px;
+  padding: 7px 13px;
+}
+
+button.secondary {
+  border-color: #aeb3ba;
+  background: #fff;
+  color: #262a30;
+}
+
+output {
+  min-height: 21px;
+  color: #176b51;
+}
+
+output[data-kind="error"] {
+  color: #b42318;
+}
+
+.popup-page {
+  width: 340px;
+  background: #fff;
+}
+
+.popup {
+  padding: 16px;
+}
+
+.popup-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.popup-heading h1 {
+  font-size: 16px;
+}
+
+.state {
+  border-radius: 999px;
+  background: #e9ecef;
+  color: #4c535c;
+  font-size: 11px;
+  padding: 4px 7px;
+}
+
+.state[data-state="submitted"],
+.state[data-state="idle"] {
+  background: #dff4ea;
+  color: #116047;
+}
+
+.state[data-state="error"] {
+  background: #fee4e2;
+  color: #b42318;
+}
+
+dl {
+  margin: 14px 0;
+}
+
+dl div {
+  display: flex;
+  justify-content: space-between;
+  border-top: 1px solid #e3e5e8;
+  padding: 8px 0;
+}
+
+dt {
+  color: #656b74;
+}
+
+dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root,
+  .popup-page {
+    color: #eff1f3;
+    background: #17191c;
+  }
+
+  p,
+  dt {
+    color: #aeb4bc;
+  }
+
+  input[type="url"],
+  input[type="password"],
+  input[type="number"],
+  input[type="text"],
+  textarea,
+  button.secondary {
+    border-color: #4b5159;
+    background: #22252a;
+    color: #eff1f3;
+  }
+
+  header,
+  dl div {
+    border-color: #383c42;
+  }
+}

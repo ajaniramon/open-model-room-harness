@@ -206,6 +206,10 @@ const audioConfigured = Boolean(
 );
 const chatRelay = new ChatRelayQueue({
   enabled: configuredBoolean(jsonConfig, "chatRelay.enabled", "CHAT_RELAY_ENABLED", false),
+  statePath: resolve(
+    projectRoot,
+    String(configured(jsonConfig, "chatRelay.statePath", "CHAT_RELAY_STATE_PATH", "state/chat-relay.json")),
+  ),
   ttlMs: configuredInteger(jsonConfig, "chatRelay.ttlSeconds", "CHAT_RELAY_TTL_SECONDS", 600, {
     min: 5,
     max: 86_400,
@@ -221,7 +225,16 @@ const chatRelay = new ChatRelayQueue({
     12_000,
     { min: 500, max: 100_000 },
   ),
+  leaseSeconds: configuredInteger(jsonConfig, "chatRelay.leaseSeconds", "CHAT_RELAY_LEASE_SECONDS", 120, {
+    min: 10,
+    max: 3_600,
+  }),
+  maxAttempts: configuredInteger(jsonConfig, "chatRelay.maxAttempts", "CHAT_RELAY_MAX_ATTEMPTS", 3, {
+    min: 1,
+    max: 20,
+  }),
 });
+await chatRelay.load();
 
 const server = startMcpControlServer({
   config: {
@@ -239,9 +252,12 @@ const server = startMcpControlServer({
     xPrefetchEnabled: configuredBoolean(jsonConfig, "xPrefetch.enabled", "JJ_X_PREFETCH_ENABLED", true),
     chatRelay: {
       enabled: chatRelay.enabled,
+      statePath: chatRelay.statePath,
       ttlMs: chatRelay.ttlMs,
       maxItems: chatRelay.maxItems,
       maxContextChars: chatRelay.maxContextChars,
+      leaseSeconds: chatRelay.leaseSeconds,
+      maxAttempts: chatRelay.maxAttempts,
     },
     discordEmojiPalette: configuredList(jsonConfig, "discord.emojiPalette", "DISCORD_EMOJI_PALETTE")
       .map((value) => String(value).replace(/\s+/g, " ").trim())
@@ -265,6 +281,7 @@ const server = startMcpControlServer({
       host: process.env.MCP_CONTROL_HOST || "127.0.0.1",
       port: integer("MCP_CONTROL_PORT", 3000, { min: 1, max: 65_535 }),
       bearerToken: process.env.MCP_CONTROL_BEARER_TOKEN || "",
+      wakeToken: process.env.MCP_CONTROL_WAKE_TOKEN || "",
     },
   },
   behaviorModeController,
@@ -281,6 +298,7 @@ const shutdown = async (signal) => {
   if (shuttingDown) return;
   shuttingDown = true;
   console.info(`Received ${signal}; closing MCP control server.`);
+  await chatRelay?.flush();
   await server?.close();
   await behaviorModeController.close();
   await participationController.close();
