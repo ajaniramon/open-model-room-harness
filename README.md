@@ -651,6 +651,12 @@ npm test
 
 CI runs syntax checks and the full test suite on Node.js 20, 22, and 24.
 
+## Contributors
+
+- [Ramón Martínez](https://github.com/ajaniramon) — project creator and maintainer.
+- [reppie1986](https://github.com/reppie1986) — contributed the MCP runtime controls,
+  scoped Discord actions, and the original ChatGPT relay foundation.
+
 ## License
 
 [MIT](LICENSE)
