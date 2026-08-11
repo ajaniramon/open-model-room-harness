@@ -425,7 +425,11 @@ can wake one configured ChatGPT conversation when relay work is pending. It poll
 authenticated `/api/chat-relay/wake-status` endpoint, which exposes only a pending
 count and opaque relay IDs. The extension does not receive Discord content, claim
 items, generate replies, or maintain a second queue; normal MCP relay tools remain
-responsible for processing and delivery.
+responsible for processing and delivery. A configurable unresolved-item circuit
+breaker progressively pauses repeated ChatGPT wake prompts while the same oldest
+item remains pending, without scraping conversation content. Set relay retention
+long enough to survive the maximum expected backoff; unattended deployments should
+generally use a substantially longer TTL than the 600-second test default.
 
 Create the task inside Gremy's existing ChatGPT conversation with a minute-based
 schedule and this durable prompt:

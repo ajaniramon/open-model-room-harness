@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Chat Relay Wake Prototype",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Wakes one configured ChatGPT task when an external harness reports pending relay work.",
   "permissions": [
     "alarms",

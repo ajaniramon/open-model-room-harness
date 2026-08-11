@@ -56,6 +56,7 @@ button {
 input[type="url"],
 input[type="password"],
 input[type="number"],
+input[type="text"],
 textarea {
   width: 100%;
   border: 1px solid #b9bec5;
@@ -191,6 +192,7 @@ dd {
   input[type="url"],
   input[type="password"],
   input[type="number"],
+  input[type="text"],
   textarea,
   button.secondary {
     border-color: #4b5159;

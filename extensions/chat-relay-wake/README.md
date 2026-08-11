@@ -40,6 +40,8 @@ npm test
 - Refuses to overwrite an unsent draft.
 - Defers while ChatGPT is already responding.
 - Uses a configurable cooldown after successful wakeups.
+- Applies a configurable progressive backoff while the same oldest relay item remains unresolved.
+- Continues lightweight harness status checks during backoff without submitting ChatGPT prompts.
 - Does not read ChatGPT responses, Discord messages, or MCP results.
 - Does not claim relay work itself.
 - Requests access to non-local harness origins only when the user saves that origin.
@@ -52,11 +54,14 @@ The extension sends an authenticated `GET` request to the configured status URL.
 {
   "enabled": true,
   "pendingCount": 2,
-  "pendingKey": "item-123,item-124"
+  "pendingKey": "item-123,item-124",
+  "oldestPendingId": "item-123"
 }
 ```
 
-`pendingKey` is optional diagnostic/deduplication metadata. It should be derived from opaque relay item IDs and must not include message content.
+`pendingKey` and `oldestPendingId` contain opaque relay IDs only. The extension uses
+the oldest ID to recognize unresolved work without inspecting Discord or ChatGPT
+content. `pendingKey` remains as backwards-compatible diagnostic metadata.
 
 The current harness already authenticates HTTP requests before routing them. A minimal route inside `startMcpControlServer` can therefore be:
 
@@ -67,12 +72,29 @@ if (req.method === "GET" && path === "/api/chat-relay/wake-status") {
     enabled: Boolean(chatRelay?.enabled ?? chatRelay),
     pendingCount: pending.length,
     pendingKey: pending.map((item) => item.id).join(","),
+    oldestPendingId: pending[0]?.id || null,
   });
   return;
 }
 ```
 
 The endpoint should remain behind the same bearer-token check as MCP. It exposes counts and opaque IDs only, never Discord content.
+
+## Unresolved-item circuit breaker
+
+After a successful wake, the extension waits for the first configured backoff
+period. If the same oldest relay item is still pending when that period ends, it
+wakes ChatGPT once more and advances to the next period. The default schedule is
+5, 15, 30, then 60 minutes; the final value is reused for later attempts.
+
+The breaker resets as soon as the queue empties or a different item becomes the
+oldest pending item. The popup shows the unresolved wake count and retry time.
+`Save and force check` in settings is the explicit manual override.
+
+This is outcome-based and deliberately does not scrape ChatGPT output for usage-limit
+messages. Polling the small status endpoint continues while prompt submission is
+paused. Configure relay retention to outlast the longest expected pause; for an
+unattended deployment, `CHAT_RELAY_TTL_SECONDS=86400` is a practical starting point.
 
 ## Deliberate omissions
 

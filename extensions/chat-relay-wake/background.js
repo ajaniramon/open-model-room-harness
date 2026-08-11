@@ -1,3 +1,10 @@
+import {
+  activeCircuitForItem,
+  createWakeCircuitState,
+  DEFAULT_BACKOFF_SCHEDULE,
+  normalizeBackoffSchedule,
+} from "./backoff.js";
+
 const ALARM_NAME = "chat-relay-wake-poll";
 
 const DEFAULTS = {
@@ -7,6 +14,7 @@ const DEFAULTS = {
   targetUrl: "",
   pollMinutes: 1,
   cooldownSeconds: 180,
+  backoffScheduleMinutes: DEFAULT_BACKOFF_SCHEDULE,
   wakePrompt: "Check and process pending chat relay items.",
   autoSubmit: true,
   openIfMissing: false,
@@ -18,6 +26,8 @@ const runtimeStatus = {
   checkedAt: null,
   pendingCount: null,
   lastWakeAt: null,
+  unresolvedAttempts: 0,
+  backoffUntil: null,
 };
 
 function clampNumber(value, minimum, maximum, fallback) {
@@ -33,6 +43,7 @@ async function getSettings() {
     ...stored,
     pollMinutes: clampNumber(stored.pollMinutes, 0.5, 60, DEFAULTS.pollMinutes),
     cooldownSeconds: clampNumber(stored.cooldownSeconds, 30, 3600, DEFAULTS.cooldownSeconds),
+    backoffScheduleMinutes: normalizeBackoffSchedule(stored.backoffScheduleMinutes),
   };
 }
 
@@ -92,6 +103,7 @@ async function fetchRelayStatus(settings) {
     enabled: payload.enabled !== false,
     pendingCount,
     pendingKey: String(payload.pendingKey || ""),
+    oldestPendingId: payload.oldestPendingId ? String(payload.oldestPendingId) : String(payload.pendingKey || "").split(",")[0],
   };
 }
 
@@ -133,7 +145,7 @@ async function wakeTarget(settings, reason) {
   }
 }
 
-async function checkRelay({ ignoreCooldown = false } = {}) {
+async function checkRelay({ force = false } = {}) {
   const settings = await getSettings();
   const checkedAt = Date.now();
 
@@ -151,13 +163,37 @@ async function checkRelay({ ignoreCooldown = false } = {}) {
     updateRuntimeStatus({ checkedAt, pendingCount: relay.pendingCount });
 
     if (!relay.enabled || relay.pendingCount === 0) {
-      updateRuntimeStatus({ state: "idle", message: relay.enabled ? "No pending relay work" : "Harness relay is disabled" });
+      await chrome.storage.local.remove("wakeCircuitState");
+      updateRuntimeStatus({
+        state: "idle",
+        message: relay.enabled ? "No pending relay work" : "Harness relay is disabled",
+        unresolvedAttempts: 0,
+        backoffUntil: null,
+      });
       return runtimeStatus;
     }
 
-    const stored = await chrome.storage.local.get({ lastWakeAt: 0 });
+    const stored = await chrome.storage.local.get({ lastWakeAt: 0, wakeCircuitState: null });
+    const savedCircuit = stored.wakeCircuitState;
+    const circuit = activeCircuitForItem(savedCircuit, relay.oldestPendingId);
+    if (!circuit && savedCircuit) {
+      await chrome.storage.local.remove("wakeCircuitState");
+      updateRuntimeStatus({ unresolvedAttempts: 0, backoffUntil: null });
+    }
+
+    const backoffRemaining = Number(circuit?.backoffUntil || 0) - Date.now();
+    if (!force && backoffRemaining > 0) {
+      updateRuntimeStatus({
+        state: "backoff",
+        message: `Pending work is unchanged; retry paused for ${Math.ceil(backoffRemaining / 60000)}m`,
+        unresolvedAttempts: Number(circuit.attempts || 0),
+        backoffUntil: Number(circuit.backoffUntil),
+      });
+      return runtimeStatus;
+    }
+
     const cooldownRemaining = settings.cooldownSeconds * 1000 - (Date.now() - Number(stored.lastWakeAt || 0));
-    if (!ignoreCooldown && cooldownRemaining > 0) {
+    if (!force && cooldownRemaining > 0) {
       updateRuntimeStatus({
         state: "cooldown",
         message: `Pending work found; cooldown has ${Math.ceil(cooldownRemaining / 1000)}s remaining`,
@@ -172,11 +208,20 @@ async function checkRelay({ ignoreCooldown = false } = {}) {
 
     if (result?.status === "submitted" || result?.status === "inserted") {
       const lastWakeAt = Date.now();
-      await chrome.storage.local.set({ lastWakeAt });
+      const wakeCircuitState = createWakeCircuitState({
+        previous: circuit,
+        itemId: relay.oldestPendingId,
+        now: lastWakeAt,
+        schedule: settings.backoffScheduleMinutes,
+      });
+      const backoffUntil = wakeCircuitState?.backoffUntil || null;
+      await chrome.storage.local.set({ lastWakeAt, wakeCircuitState });
       updateRuntimeStatus({
         state: result.status,
         message: result.status === "submitted" ? "ChatGPT task was woken" : "Wake prompt inserted for review",
         lastWakeAt,
+        unresolvedAttempts: wakeCircuitState?.attempts || 0,
+        backoffUntil,
       });
     } else {
       updateRuntimeStatus({ state: result?.status || "deferred", message: result?.reason || "Wake was deferred" });
@@ -213,7 +258,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "chat-relay:check-now") {
-    checkRelay({ ignoreCooldown: Boolean(message.ignoreCooldown) }).then(sendResponse);
+    checkRelay({ force: Boolean(message.force) }).then(sendResponse);
     return true;
   }
   if (message?.type === "chat-relay:get-status") {

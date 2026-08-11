@@ -1418,6 +1418,7 @@ export function startMcpControlServer({
           enabled: chatRelay?.enabled === true,
           pendingCount: pending.length,
           pendingKey: pending.map((item) => item.id).filter(Boolean).join(","),
+          oldestPendingId: pending[0]?.id || null,
         });
         return;
       }

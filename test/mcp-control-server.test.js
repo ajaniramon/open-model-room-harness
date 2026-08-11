@@ -123,6 +123,7 @@ test("MCP control server exposes authenticated chat relay wake status", async ()
       enabled: true,
       pendingCount: 2,
       pendingKey: "relay-1,relay-2",
+      oldestPendingId: "relay-1",
     });
   } finally {
     await server.close();

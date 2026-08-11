@@ -46,6 +46,11 @@
         </div>
 
         <label>
+          Unresolved retry schedule (minutes)
+          <input id="backoffScheduleMinutes" name="backoffScheduleMinutes" type="text" required placeholder="5, 15, 30, 60" spellcheck="false">
+        </label>
+
+        <label>
           Wake prompt
           <textarea id="wakePrompt" name="wakePrompt" rows="3"></textarea>
         </label>
@@ -62,11 +67,11 @@
 
         <div class="actions">
           <button type="submit">Save</button>
-          <button id="test" type="button" class="secondary">Save and check now</button>
+          <button id="test" type="button" class="secondary">Save and force check</button>
         </div>
         <output id="message" aria-live="polite"></output>
       </form>
     </main>
-    <script src="options.js"></script>
+    <script type="module" src="options.js"></script>
   </body>
 </html>

@@ -4,6 +4,12 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import {
+  activeCircuitForItem,
+  backoffMinutesForAttempt,
+  createWakeCircuitState,
+  normalizeBackoffSchedule,
+} from "../backoff.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
@@ -27,9 +33,36 @@ test("manifest references files that exist", async () => {
 });
 
 test("extension scripts pass Node syntax checks", () => {
-  for (const script of ["background.js", "content.js", "options.js", "popup.js"]) {
+  for (const script of ["backoff.js", "background.js", "content.js", "options.js", "popup.js"]) {
     execFileSync(process.execPath, ["--check", join(root, script)], { stdio: "pipe" });
   }
+});
+
+test("backoff schedule is normalized and capped", () => {
+  assert.deepEqual(normalizeBackoffSchedule("5, 2, 30, nope, 2000"), [5, 5, 30, 1440]);
+  assert.deepEqual(normalizeBackoffSchedule(""), [5, 15, 30, 60]);
+  assert.equal(backoffMinutesForAttempt([5, 15, 30, 60], 1), 5);
+  assert.equal(backoffMinutesForAttempt([5, 15, 30, 60], 3), 30);
+  assert.equal(backoffMinutesForAttempt([5, 15, 30, 60], 99), 60);
+});
+
+test("circuit advances only while the same oldest item remains", () => {
+  const first = createWakeCircuitState({ itemId: "relay-1", now: 1_000, schedule: [5, 15, 30] });
+  assert.deepEqual(first, {
+    itemId: "relay-1",
+    attempts: 1,
+    lastWakeAt: 1_000,
+    backoffUntil: 301_000,
+  });
+
+  const second = createWakeCircuitState({ previous: first, itemId: "relay-1", now: 400_000, schedule: [5, 15, 30] });
+  assert.equal(second.attempts, 2);
+  assert.equal(second.backoffUntil, 1_300_000);
+  assert.equal(activeCircuitForItem(second, "relay-2"), null);
+
+  const replacement = createWakeCircuitState({ previous: second, itemId: "relay-2", now: 500_000, schedule: [5, 15, 30] });
+  assert.equal(replacement.attempts, 1);
+  assert.equal(createWakeCircuitState({ previous: replacement, itemId: "", now: 600_000, schedule: [5] }), null);
 });
 
 test("prototype contains no companion or Discord scope names", async () => {
