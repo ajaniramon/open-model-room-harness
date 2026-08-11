@@ -16,6 +16,7 @@ function createTestServer(overrides = {}) {
         host: "127.0.0.1",
         port: 0,
         bearerToken: "secret-token",
+        wakeToken: "wake-token",
       },
       ...overrides.config,
     },
@@ -98,13 +99,15 @@ test("MCP control server can authorize SSE sessions with a URL token", async () 
 test("MCP control server exposes authenticated chat relay wake status", async () => {
   const chatRelay = {
     enabled: true,
-    pending: ({ includeContext }) => {
-      assert.equal(includeContext, false);
-      return [
-        { id: "relay-1", triggerText: "must not be exposed" },
-        { id: "relay-2", triggerText: "must not be exposed either" },
-      ];
-    },
+    wakeStatus: () => ({
+      pendingCount: 1,
+      leasedCount: 1,
+      activeCount: 2,
+      pendingKey: "relay-2",
+      activeKey: "relay-1,relay-2",
+      oldestPendingId: "relay-2",
+      oldestActiveId: "relay-1",
+    }),
   };
   const server = createTestServer({ chatRelay });
   try {
@@ -115,19 +118,61 @@ test("MCP control server exposes authenticated chat relay wake status", async ()
     const rejected = await fetch(url);
     assert.equal(rejected.status, 401);
 
-    const accepted = await fetch(url, {
+    const adminTokenRejected = await fetch(url, {
       headers: { authorization: "Bearer secret-token" },
+    });
+    assert.equal(adminTokenRejected.status, 401);
+
+    const accepted = await fetch(url, {
+      headers: { authorization: "Bearer wake-token" },
     });
     assert.equal(accepted.status, 200);
     assert.deepEqual(await accepted.json(), {
       enabled: true,
-      pendingCount: 2,
-      pendingKey: "relay-1,relay-2",
-      oldestPendingId: "relay-1",
+      pendingCount: 1,
+      leasedCount: 1,
+      activeCount: 2,
+      pendingKey: "relay-2",
+      activeKey: "relay-1,relay-2",
+      oldestPendingId: "relay-2",
+      oldestActiveId: "relay-1",
     });
   } finally {
     await server.close();
   }
+});
+
+test("MCP control server disables wake status without a dedicated token", async () => {
+  const server = createTestServer({
+    config: { mcpControl: { enabled: true, host: "127.0.0.1", port: 0, bearerToken: "secret-token" } },
+  });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const { port } = server.address();
+    const response = await fetch(`http://127.0.0.1:${port}/api/chat-relay/wake-status`, {
+      headers: { authorization: "Bearer secret-token" },
+    });
+    assert.equal(response.status, 503);
+  } finally {
+    await server.close();
+  }
+});
+
+test("MCP control server rejects reusing the privileged token for wake status", () => {
+  assert.throws(
+    () => createTestServer({
+      config: {
+        mcpControl: {
+          enabled: true,
+          host: "127.0.0.1",
+          port: 0,
+          bearerToken: "same-token",
+          wakeToken: "same-token",
+        },
+      },
+    }),
+    /must differ/,
+  );
 });
 
 test("MCP control server accepts streamable HTTP posts on the configured URL", async () => {

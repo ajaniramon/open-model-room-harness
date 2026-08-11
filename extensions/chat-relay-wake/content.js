@@ -78,6 +78,18 @@ async function waitForEnabledSendButton(timeoutMs = 4000) {
   return null;
 }
 
+async function waitForSubmission(composer, previousUserMessageCount, timeoutMs = 4000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const userMessageCount = document.querySelectorAll("[data-message-author-role='user']").length;
+    if (!composer.isConnected || !composerText(composer) || isBusy() || userMessageCount > previousUserMessageCount) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return false;
+}
+
 async function handleWake({ prompt, autoSubmit }) {
   if (isBusy()) {
     return { status: "deferred", reason: "ChatGPT is currently responding" };
@@ -105,7 +117,11 @@ async function handleWake({ prompt, autoSubmit }) {
     return { status: "failed", reason: "ChatGPT send button did not become available" };
   }
 
+  const previousUserMessageCount = document.querySelectorAll("[data-message-author-role='user']").length;
   sendButton.click();
+  if (!(await waitForSubmission(composer, previousUserMessageCount))) {
+    return { status: "failed", reason: "ChatGPT did not confirm prompt submission" };
+  }
   return { status: "submitted" };
 }
 

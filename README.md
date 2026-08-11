@@ -326,6 +326,7 @@ Discord send/read tools:
 ```dotenv
 MCP_CONTROL_ENABLED=true
 MCP_CONTROL_BEARER_TOKEN=replace-with-a-private-token
+MCP_CONTROL_WAKE_TOKEN=replace-with-a-separate-read-only-token
 ```
 
 The server listens on `http://127.0.0.1:3000/sse` by default and requires
@@ -406,7 +407,7 @@ turns instead of posting the provider-disabled test message:
 ```dotenv
 CHAT_RELAY_ENABLED=true
 CHAT_RELAY_STATE_PATH=state/chat-relay.json
-CHAT_RELAY_TTL_SECONDS=600
+CHAT_RELAY_TTL_SECONDS=86400
 CHAT_RELAY_MAX_ITEMS=50
 CHAT_RELAY_LEASE_SECONDS=120
 CHAT_RELAY_MAX_ATTEMPTS=3
@@ -430,6 +431,11 @@ breaker progressively pauses repeated ChatGPT wake prompts while the same oldest
 item remains pending, without scraping conversation content. Set relay retention
 long enough to survive the maximum expected backoff; unattended deployments should
 generally use a substantially longer TTL than the 600-second test default.
+
+The wake endpoint accepts only `MCP_CONTROL_WAKE_TOKEN`, a dedicated read-only
+credential that cannot invoke MCP tools. Do not put `MCP_CONTROL_BEARER_TOKEN` in
+the extension. Remote status URLs must use HTTPS; plain HTTP is accepted only for
+loopback development.
 
 Create the task inside Gremy's existing ChatGPT conversation with a minute-based
 schedule and this durable prompt:

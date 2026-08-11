@@ -192,6 +192,22 @@ export class ChatRelayQueue {
       .map((item) => this.#publicItem(item, { includeContext }));
   }
 
+  wakeStatus() {
+    this.sweep();
+    const active = this.#activeItems();
+    const pending = active.filter((item) => item.status === "pending");
+    const leased = active.filter((item) => item.status === "leased");
+    return {
+      pendingCount: pending.length,
+      leasedCount: leased.length,
+      activeCount: active.length,
+      pendingKey: pending.map((item) => item.id).join(","),
+      activeKey: active.map((item) => item.id).join(","),
+      oldestPendingId: pending[0]?.id || null,
+      oldestActiveId: active[0]?.id || null,
+    };
+  }
+
   get(id, { includeContext = true } = {}) {
     this.sweep();
     const item = this.items.get(String(id || ""));

@@ -169,6 +169,15 @@ test("claims relay items atomically and requires the lease token to complete the
   const claimed = await queue.claim({ workerId: "scheduled-gremy", limit: 1 });
   assert.equal(claimed.length, 1);
   assert.equal(claimed[0].id, id);
+  assert.deepEqual(queue.wakeStatus(), {
+    pendingCount: 0,
+    leasedCount: 1,
+    activeCount: 1,
+    pendingKey: "",
+    activeKey: id,
+    oldestPendingId: null,
+    oldestActiveId: id,
+  });
   assert.equal((await queue.claim({ workerId: "second-worker" })).length, 0);
   assert.deepEqual(await queue.submit(id, "wrong worker", "invalid"), {
     ok: false,
@@ -188,4 +197,5 @@ test("requeues a claimed item after its lease expires", async () => {
   now += 11_000;
   assert.equal(queue.pending().length, 1);
   assert.equal(queue.pending()[0].status, "pending");
+  assert.equal(queue.wakeStatus().oldestActiveId, claimed[0].id);
 });

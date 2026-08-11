@@ -281,6 +281,7 @@ const server = startMcpControlServer({
       host: process.env.MCP_CONTROL_HOST || "127.0.0.1",
       port: integer("MCP_CONTROL_PORT", 3000, { min: 1, max: 65_535 }),
       bearerToken: process.env.MCP_CONTROL_BEARER_TOKEN || "",
+      wakeToken: process.env.MCP_CONTROL_WAKE_TOKEN || "",
     },
   },
   behaviorModeController,

@@ -10,7 +10,7 @@ const ALARM_NAME = "chat-relay-wake-poll";
 const DEFAULTS = {
   enabled: false,
   statusUrl: "http://127.0.0.1:3000/api/chat-relay/wake-status",
-  bearerToken: "",
+  wakeToken: "",
   targetUrl: "",
   pollMinutes: 1,
   cooldownSeconds: 180,
@@ -25,6 +25,7 @@ const runtimeStatus = {
   message: "Not checked yet",
   checkedAt: null,
   pendingCount: null,
+  activeCount: null,
   lastWakeAt: null,
   unresolvedAttempts: 0,
   backoffUntil: null,
@@ -75,18 +76,24 @@ async function configureAlarm() {
 }
 
 async function fetchRelayStatus(settings) {
+  const statusUrl = new URL(settings.statusUrl);
+  const loopback = ["127.0.0.1", "localhost", "[::1]"].includes(statusUrl.hostname);
+  if (statusUrl.protocol !== "https:" && !(statusUrl.protocol === "http:" && loopback)) {
+    throw new Error("Remote harness status URLs must use HTTPS");
+  }
   const headers = {
     accept: "application/json",
     "ngrok-skip-browser-warning": "chat-relay-wake",
   };
-  if (settings.bearerToken) {
-    headers.authorization = `Bearer ${settings.bearerToken}`;
+  if (settings.wakeToken) {
+    headers.authorization = `Bearer ${settings.wakeToken}`;
   }
 
   const response = await fetch(settings.statusUrl, {
     method: "GET",
     headers,
     cache: "no-store",
+    redirect: "error",
   });
 
   if (!response.ok) {
@@ -95,15 +102,31 @@ async function fetchRelayStatus(settings) {
 
   const payload = await response.json();
   const pendingCount = Number(payload.pendingCount);
+  const activeCount = Number(payload.activeCount ?? payload.pendingCount);
+  const leasedCount = Number(payload.leasedCount ?? Math.max(0, activeCount - pendingCount));
   if (!Number.isInteger(pendingCount) || pendingCount < 0) {
     throw new Error("Harness response does not contain a valid pendingCount");
+  }
+  if (
+    !Number.isInteger(activeCount) ||
+    !Number.isInteger(leasedCount) ||
+    leasedCount < 0 ||
+    pendingCount + leasedCount !== activeCount
+  ) {
+    throw new Error("Harness response does not contain valid active relay counts");
   }
 
   return {
     enabled: payload.enabled !== false,
     pendingCount,
+    leasedCount,
+    activeCount,
     pendingKey: String(payload.pendingKey || ""),
     oldestPendingId: payload.oldestPendingId ? String(payload.oldestPendingId) : String(payload.pendingKey || "").split(",")[0],
+    activeKey: String(payload.activeKey || payload.pendingKey || ""),
+    oldestActiveId: payload.oldestActiveId
+      ? String(payload.oldestActiveId)
+      : String(payload.oldestPendingId || payload.pendingKey || "").split(",")[0],
   };
 }
 
@@ -160,9 +183,9 @@ async function checkRelay({ force = false } = {}) {
 
   try {
     const relay = await fetchRelayStatus(settings);
-    updateRuntimeStatus({ checkedAt, pendingCount: relay.pendingCount });
+    updateRuntimeStatus({ checkedAt, pendingCount: relay.pendingCount, activeCount: relay.activeCount });
 
-    if (!relay.enabled || relay.pendingCount === 0) {
+    if (!relay.enabled || relay.activeCount === 0) {
       await chrome.storage.local.remove("wakeCircuitState");
       updateRuntimeStatus({
         state: "idle",
@@ -173,9 +196,17 @@ async function checkRelay({ force = false } = {}) {
       return runtimeStatus;
     }
 
+    if (relay.pendingCount === 0) {
+      updateRuntimeStatus({
+        state: "processing",
+        message: `${relay.leasedCount} relay item(s) currently being processed`,
+      });
+      return runtimeStatus;
+    }
+
     const stored = await chrome.storage.local.get({ lastWakeAt: 0, wakeCircuitState: null });
     const savedCircuit = stored.wakeCircuitState;
-    const circuit = activeCircuitForItem(savedCircuit, relay.oldestPendingId);
+    const circuit = activeCircuitForItem(savedCircuit, relay.oldestActiveId);
     if (!circuit && savedCircuit) {
       await chrome.storage.local.remove("wakeCircuitState");
       updateRuntimeStatus({ unresolvedAttempts: 0, backoffUntil: null });
@@ -203,14 +234,14 @@ async function checkRelay({ force = false } = {}) {
 
     const result = await wakeTarget(settings, {
       pendingCount: relay.pendingCount,
-      pendingKey: relay.pendingKey,
+      activeKey: relay.activeKey,
     });
 
     if (result?.status === "submitted" || result?.status === "inserted") {
       const lastWakeAt = Date.now();
       const wakeCircuitState = createWakeCircuitState({
         previous: circuit,
-        itemId: relay.oldestPendingId,
+        itemId: relay.oldestActiveId,
         now: lastWakeAt,
         schedule: settings.backoffScheduleMinutes,
       });

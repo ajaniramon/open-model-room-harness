@@ -14,7 +14,6 @@
     "http://localhost/*"
   ],
   "optional_host_permissions": [
-    "http://*/*",
     "https://*/*"
   ],
   "background": {

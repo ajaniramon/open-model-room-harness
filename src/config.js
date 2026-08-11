@@ -541,6 +541,7 @@ export const config = Object.freeze({
       max: 65_535,
     }),
     bearerToken: String(configured("mcpControl.bearerToken", "MCP_CONTROL_BEARER_TOKEN", "")),
+    wakeToken: String(configured("mcpControl.wakeToken", "MCP_CONTROL_WAKE_TOKEN", "")),
   }),
   chatRelay: Object.freeze({
     enabled: configuredBoolean("chatRelay.enabled", "CHAT_RELAY_ENABLED", false),

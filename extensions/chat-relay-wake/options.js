@@ -3,7 +3,7 @@ import { DEFAULT_BACKOFF_SCHEDULE, normalizeBackoffSchedule } from "./backoff.js
 const DEFAULTS = {
   enabled: false,
   statusUrl: "http://127.0.0.1:3000/api/chat-relay/wake-status",
-  bearerToken: "",
+  wakeToken: "",
   targetUrl: "",
   pollMinutes: 1,
   cooldownSeconds: 180,
@@ -35,7 +35,7 @@ function readSettings() {
   return {
     enabled: form.enabled.checked,
     statusUrl: form.statusUrl.value.trim(),
-    bearerToken: form.bearerToken.value.trim(),
+    wakeToken: form.wakeToken.value.trim(),
     targetUrl: form.targetUrl.value.trim(),
     pollMinutes: Number(form.pollMinutes.value),
     cooldownSeconds: Number(form.cooldownSeconds.value),
@@ -48,13 +48,18 @@ function readSettings() {
 
 async function requestHarnessPermission(statusUrl) {
   const url = new URL(statusUrl);
-  if (["http://127.0.0.1", "http://localhost"].includes(url.origin)) return true;
+  const loopback = ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
+    throw new Error("Remote harness status URLs must use HTTPS");
+  }
+  if (loopback) return true;
   return chrome.permissions.request({ origins: [`${url.origin}/*`] });
 }
 
 async function saveSettings() {
   const settings = readSettings();
   if (!settings.wakePrompt) throw new Error("Wake prompt cannot be empty");
+  if (!settings.wakeToken) throw new Error("A dedicated wake status token is required");
   const targetUrl = new URL(settings.targetUrl);
   if (!["chatgpt.com", "chat.openai.com"].includes(targetUrl.hostname) || !targetUrl.pathname.includes("/c/")) {
     throw new Error("Use the URL of an existing ChatGPT conversation");

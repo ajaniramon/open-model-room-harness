@@ -722,9 +722,11 @@ export function createDiscordBot({
       const original = item.messageId && channel.messages?.fetch
         ? await channel.messages.fetch(item.messageId).catch(() => null)
         : null;
-      const payload = { content: content.slice(0, DISCORD_MESSAGE_LIMIT * 10), allowedMentions: { parse: [] } };
-      if (original?.reply) await original.reply(payload);
-      else await channel.send(payload);
+      if (original?.reply) {
+        await sendResponse(original, content, { reply: true, logger });
+      } else {
+        await sendResponse({ channel }, content, { reply: false, logger });
+      }
     },
   });
 

@@ -22,7 +22,7 @@ Discord message
 2. Enable Developer mode.
 3. Choose Load unpacked.
 4. Select this folder.
-5. Open the extension settings and configure the harness URL, bearer token, and exact ChatGPT task URL.
+5. Open the extension settings and configure the harness URL, dedicated wake status token, and exact ChatGPT task URL.
 
 No `npm install` or build step is required.
 
@@ -45,6 +45,7 @@ npm test
 - Does not read ChatGPT responses, Discord messages, or MCP results.
 - Does not claim relay work itself.
 - Requests access to non-local harness origins only when the user saves that origin.
+- Sends credentials only to HTTPS origins, except for local loopback development.
 
 ## Harness contract
 
@@ -53,32 +54,20 @@ The extension sends an authenticated `GET` request to the configured status URL.
 ```json
 {
   "enabled": true,
-  "pendingCount": 2,
-  "pendingKey": "item-123,item-124",
-  "oldestPendingId": "item-123"
+  "pendingCount": 1,
+  "leasedCount": 1,
+  "activeCount": 2,
+  "pendingKey": "item-124",
+  "activeKey": "item-123,item-124",
+  "oldestPendingId": "item-124",
+  "oldestActiveId": "item-123"
 }
 ```
 
-`pendingKey` and `oldestPendingId` contain opaque relay IDs only. The extension uses
-the oldest ID to recognize unresolved work without inspecting Discord or ChatGPT
-content. `pendingKey` remains as backwards-compatible diagnostic metadata.
-
-The current harness already authenticates HTTP requests before routing them. A minimal route inside `startMcpControlServer` can therefore be:
-
-```js
-if (req.method === "GET" && path === "/api/chat-relay/wake-status") {
-  const pending = chatRelay?.pending?.({ includeContext: false }) || [];
-  sendJson(res, 200, {
-    enabled: Boolean(chatRelay?.enabled ?? chatRelay),
-    pendingCount: pending.length,
-    pendingKey: pending.map((item) => item.id).join(","),
-    oldestPendingId: pending[0]?.id || null,
-  });
-  return;
-}
-```
-
-The endpoint should remain behind the same bearer-token check as MCP. It exposes counts and opaque IDs only, never Discord content.
+The IDs are opaque. Active counts include both pending and leased items so claiming
+work does not reset the unresolved-item circuit. The endpoint accepts only the
+dedicated `MCP_CONTROL_WAKE_TOKEN`; it does not accept the privileged MCP bearer
+token and never exposes Discord content.
 
 ## Unresolved-item circuit breaker
 
@@ -88,7 +77,8 @@ wakes ChatGPT once more and advances to the next period. The default schedule is
 5, 15, 30, then 60 minutes; the final value is reused for later attempts.
 
 The breaker resets as soon as the queue empties or a different item becomes the
-oldest pending item. The popup shows the unresolved wake count and retry time.
+oldest active item. A leased item remains active, so a worker crash cannot reset
+the breaker before its lease expires. The popup shows the unresolved wake count and retry time.
 `Save and force check` in settings is the explicit manual override.
 
 This is outcome-based and deliberately does not scrape ChatGPT output for usage-limit

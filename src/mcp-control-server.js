@@ -1295,6 +1295,10 @@ export function startMcpControlServer({
   }
   const token = String(config.mcpControl.bearerToken || "").trim();
   if (!token) throw new Error("MCP control requires MCP_CONTROL_BEARER_TOKEN.");
+  const wakeToken = String(config.mcpControl.wakeToken || "").trim();
+  if (wakeToken && wakeToken === token) {
+    throw new Error("MCP_CONTROL_WAKE_TOKEN must differ from MCP_CONTROL_BEARER_TOKEN.");
+  }
 
   const transports = new Map();
   const authorizedSessions = new Set();
@@ -1304,13 +1308,36 @@ export function startMcpControlServer({
     const url = new URL(req.url || "/", `http://${req.headers.host || "127.0.0.1"}`);
     const sessionId = url.searchParams.get("sessionId") || "";
     const path = normalizedMcpPath(url.pathname);
+    const wakeStatusRequest = req.method === "GET" && path === "/api/chat-relay/wake-status";
+    if (wakeStatusRequest && !wakeToken) {
+      sendJson(res, 503, { error: "Wake status is not configured." });
+      return;
+    }
     const authorized =
-      hasValidToken(req, url, token) || (sessionId && authorizedSessions.has(sessionId));
+      (wakeStatusRequest && hasValidToken(req, url, wakeToken)) ||
+      (!wakeStatusRequest && (hasValidToken(req, url, token) || (sessionId && authorizedSessions.has(sessionId))));
     if (!authorized) {
       rejectUnauthorized(res);
       return;
     }
     try {
+      if (wakeStatusRequest) {
+        const status = chatRelay?.wakeStatus?.() || {
+          pendingCount: 0,
+          leasedCount: 0,
+          activeCount: 0,
+          pendingKey: "",
+          activeKey: "",
+          oldestPendingId: null,
+          oldestActiveId: null,
+        };
+        sendJson(res, 200, {
+          enabled: chatRelay?.enabled === true,
+          ...status,
+        });
+        return;
+      }
+
       if ((req.method === "GET" || req.method === "POST") && ["/mcp", "/sse"].includes(path)) {
         if (req.method === "POST") {
           const transport = new StreamableHTTPServerTransport({
@@ -1409,17 +1436,6 @@ export function startMcpControlServer({
 
       if (req.method === "GET" && path === "/health") {
         sendJson(res, 200, { ok: true });
-        return;
-      }
-
-      if (req.method === "GET" && path === "/api/chat-relay/wake-status") {
-        const pending = chatRelay?.pending?.({ includeContext: false }) || [];
-        sendJson(res, 200, {
-          enabled: chatRelay?.enabled === true,
-          pendingCount: pending.length,
-          pendingKey: pending.map((item) => item.id).filter(Boolean).join(","),
-          oldestPendingId: pending[0]?.id || null,
-        });
         return;
       }
 

@@ -81,6 +81,6 @@ test("prototype contains no companion or Discord scope names", async () => {
 
 test("remote harness access is optional", async () => {
   const manifest = JSON.parse(await read("manifest.json"));
-  assert.deepEqual(manifest.optional_host_permissions, ["http://*/*", "https://*/*"]);
+  assert.deepEqual(manifest.optional_host_permissions, ["https://*/*"]);
   assert.equal(manifest.host_permissions.includes("<all_urls>"), false);
 });
