@@ -1412,6 +1412,16 @@ export function startMcpControlServer({
         return;
       }
 
+      if (req.method === "GET" && path === "/api/chat-relay/wake-status") {
+        const pending = chatRelay?.pending?.({ includeContext: false }) || [];
+        sendJson(res, 200, {
+          enabled: chatRelay?.enabled === true,
+          pendingCount: pending.length,
+          pendingKey: pending.map((item) => item.id).filter(Boolean).join(","),
+        });
+        return;
+      }
+
       if (req.method === "GET" && path === "/scopes") {
         scopePanelHtml ||= await readFile(new URL("../scripts/discord-scopes-panel.html", import.meta.url), "utf8");
         sendHtml(res, 200, scopePanelHtml);

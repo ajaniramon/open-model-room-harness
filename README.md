@@ -419,6 +419,14 @@ ChatGPT task should claim work with `claim_chat_relay_items`, inspect each item 
 with `dismiss_chat_relay_item`. Claims have expiring leases so overlapping task runs
 cannot answer the same Discord message. This is not a raw Discord send tool.
 
+For environments where scheduled tasks are too infrequent, the optional build-free
+browser prototype in [`extensions/chat-relay-wake`](extensions/chat-relay-wake/README.md)
+can wake one configured ChatGPT conversation when relay work is pending. It polls the
+authenticated `/api/chat-relay/wake-status` endpoint, which exposes only a pending
+count and opaque relay IDs. The extension does not receive Discord content, claim
+items, generate replies, or maintain a second queue; normal MCP relay tools remain
+responsible for processing and delivery.
+
 Create the task inside Gremy's existing ChatGPT conversation with a minute-based
 schedule and this durable prompt:
 

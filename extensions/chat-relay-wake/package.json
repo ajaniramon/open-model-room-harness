@@ -1,0 +1,10 @@
+{
+  "name": "chat-relay-wake-extension-prototype",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check background.js && node --check content.js && node --check options.js && node --check popup.js",
+    "test": "node --test"
+  }
+}

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Chat Relay Wake</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body class="popup-page">
+    <main class="popup">
+      <div class="popup-heading">
+        <h1>Chat Relay Wake</h1>
+        <span id="state" class="state">idle</span>
+      </div>
+      <p id="status">Loading status...</p>
+      <dl>
+        <div><dt>Pending</dt><dd id="pending">-</dd></div>
+        <div><dt>Last check</dt><dd id="checked">-</dd></div>
+      </dl>
+      <div class="actions">
+        <button id="check" type="button">Check now</button>
+        <button id="settings" type="button" class="secondary">Settings</button>
+      </div>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

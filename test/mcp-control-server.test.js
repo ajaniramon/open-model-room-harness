@@ -95,6 +95,40 @@ test("MCP control server can authorize SSE sessions with a URL token", async () 
   }
 });
 
+test("MCP control server exposes authenticated chat relay wake status", async () => {
+  const chatRelay = {
+    enabled: true,
+    pending: ({ includeContext }) => {
+      assert.equal(includeContext, false);
+      return [
+        { id: "relay-1", triggerText: "must not be exposed" },
+        { id: "relay-2", triggerText: "must not be exposed either" },
+      ];
+    },
+  };
+  const server = createTestServer({ chatRelay });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const { port } = server.address();
+    const url = `http://127.0.0.1:${port}/api/chat-relay/wake-status`;
+
+    const rejected = await fetch(url);
+    assert.equal(rejected.status, 401);
+
+    const accepted = await fetch(url, {
+      headers: { authorization: "Bearer secret-token" },
+    });
+    assert.equal(accepted.status, 200);
+    assert.deepEqual(await accepted.json(), {
+      enabled: true,
+      pendingCount: 2,
+      pendingKey: "relay-1,relay-2",
+    });
+  } finally {
+    await server.close();
+  }
+});
+
 test("MCP control server accepts streamable HTTP posts on the configured URL", async () => {
   const server = createTestServer();
   try {
