@@ -78,6 +78,17 @@
     "maxPosts": 2,
     "maxChars": 1200
   },
+  "chatRelay": {
+    "enabled": false,
+    "statePath": "state/chat-relay.json",
+    "ttlSeconds": 86400,
+    "maxItems": 50,
+    "maxContextChars": 12000,
+    "leaseSeconds": 120,
+    "maxAttempts": 3,
+    "maxImageAttachments": 4,
+    "maxAttachmentBytes": 8000000
+  },
   "memory": {
     "enabled": false,
     "storePath": "state/memory.jsonl",

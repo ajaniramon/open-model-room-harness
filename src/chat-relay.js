@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { collectRelayImageAttachments, publicRelayImageAttachment } from "./chat-relay-attachments.js";
 
 function createRelayId() {
   return `relay_${Date.now().toString(36)}_${randomBytes(5).toString("hex")}`;
@@ -45,6 +46,7 @@ export class ChatRelayQueue {
     maxContextChars = 12_000,
     leaseSeconds = 120,
     maxAttempts = 3,
+    maxImageAttachments = 4,
     now = Date.now,
     logger = console,
     setTimer = setTimeout,
@@ -58,6 +60,8 @@ export class ChatRelayQueue {
     this.maxContextChars = Math.max(500, Math.min(Number(maxContextChars) || 12_000, 100_000));
     this.leaseSeconds = Math.max(10, Math.min(Number(leaseSeconds) || 120, 3_600));
     this.maxAttempts = Math.max(1, Math.min(Number(maxAttempts) || 3, 20));
+    const requestedImageLimit = Number(maxImageAttachments);
+    this.maxImageAttachments = Math.max(0, Math.min(Number.isFinite(requestedImageLimit) ? requestedImageLimit : 4, 10));
     this.now = now;
     this.logger = logger;
     this.setTimer = setTimer;
@@ -81,6 +85,7 @@ export class ChatRelayQueue {
           status: "pending",
           leaseToken: null,
           leaseUntil: null,
+          imageAttachments: Array.isArray(raw.imageAttachments) ? raw.imageAttachments.slice(0, this.maxImageAttachments) : [],
           onReply: null,
           onDismiss: null,
         });
@@ -167,6 +172,7 @@ export class ChatRelayQueue {
           "",
       },
       triggerText: String(message.content || "").slice(0, 2_000),
+      imageAttachments: collectRelayImageAttachments(message, this.maxImageAttachments),
       context: compactContext(context || [], this.maxContextChars),
       onReply,
       onDismiss,
@@ -214,6 +220,15 @@ export class ChatRelayQueue {
     return item && ["pending", "leased"].includes(item.status)
       ? this.#publicItem(item, { includeContext })
       : null;
+  }
+
+  getImageAttachment(id, index) {
+    this.sweep();
+    const item = this.items.get(String(id || ""));
+    if (!item || !["pending", "leased"].includes(item.status)) return null;
+    const attachmentIndex = Number(index);
+    if (!Number.isInteger(attachmentIndex) || attachmentIndex < 0) return null;
+    return item.imageAttachments?.[attachmentIndex] || null;
   }
 
   async claim({ workerId = "worker", limit = 3, leaseSeconds = this.leaseSeconds, includeContext = true } = {}) {
@@ -361,6 +376,7 @@ export class ChatRelayQueue {
       isDM: item.isDM,
       author: item.author,
       triggerText: item.triggerText,
+      imageAttachments: (item.imageAttachments || []).map(publicRelayImageAttachment),
       ...(includeContext ? { context: item.context } : {}),
     };
   }

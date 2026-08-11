@@ -6,6 +6,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
+import { fetchRelayImageAttachment } from "./chat-relay-attachments.js";
 import {
   clearDiscordScope,
   listDiscordScopes,
@@ -451,6 +452,16 @@ const TOOL_CATALOG = Object.freeze([
     },
   },
   {
+    name: "get_chat_relay_attachment",
+    category: "chat-relay",
+    safety: "read-only",
+    description: "Fetch one image attached to a pending or leased Discord relay item.",
+    arguments: {
+      id: "Relay item ID.",
+      index: "Zero-based image attachment index from the relay item.",
+    },
+  },
+  {
     name: "submit_chat_relay_reply",
     category: "chat-relay",
     safety: "runtime-write",
@@ -604,6 +615,7 @@ function createMcpServer({
   requestRuntimeRestart = null,
   config,
   logger = console,
+  fetchImplementation = fetch,
 }) {
   const server = new McpServer({
     name: "behavior-mode-control",
@@ -646,7 +658,12 @@ function createMcpServer({
         },
         {
           goal: "Answer queued Discord turns through an external chat provider",
-          tools: ["claim_chat_relay_items", "get_chat_relay_item", "complete_chat_relay_item"],
+          tools: [
+            "claim_chat_relay_items",
+            "get_chat_relay_item",
+            "get_chat_relay_attachment",
+            "complete_chat_relay_item",
+          ],
         },
       ],
       notes: [
@@ -1243,6 +1260,50 @@ function createMcpServer({
     id: z.string(),
   }, async ({ id }) => textResult(chatRelay?.get?.(id, { includeContext: true }) || null));
 
+  server.tool("get_chat_relay_attachment", "Fetch one image attached to a pending or leased Discord relay item.", {
+    id: z.string(),
+    index: z.number().int().min(0).max(9),
+  }, async ({ id, index }) => {
+    const reference = chatRelay?.getImageAttachment?.(id, index);
+    if (!reference) {
+      return {
+        content: [{ type: "text", text: "Relay image attachment was not found or is no longer active." }],
+        isError: true,
+      };
+    }
+    try {
+      const image = await fetchRelayImageAttachment(reference, {
+        fetchImplementation,
+        maxBytes: config.chatRelay?.maxAttachmentBytes,
+      });
+      return {
+        content: [
+          { type: "image", data: image.data, mimeType: image.mimeType },
+          {
+            type: "text",
+            text: JSON.stringify({
+              relayItemId: id,
+              index,
+              source: reference.source,
+              filename: reference.filename,
+              mimeType: image.mimeType,
+              size: image.size,
+            }),
+          },
+        ],
+      };
+    } catch (error) {
+      logger.error("MCP chat relay attachment fetch failed", error);
+      return {
+        content: [{
+          type: "text",
+          text: error instanceof Error ? error.message : "Relay image attachment could not be fetched.",
+        }],
+        isError: true,
+      };
+    }
+  });
+
   server.tool("submit_chat_relay_reply", "Submit a reply for a pending Discord relay item.", {
     id: z.string(),
     reply: z.string().min(1).max(8_000),
@@ -1299,6 +1360,7 @@ export function startMcpControlServer({
   auditLogger = null,
   requestRuntimeRestart = null,
   logger = console,
+  fetchImplementation = fetch,
 }) {
   if (!config.mcpControl?.enabled) return null;
   if (!behaviorModeController?.enabled) {
@@ -1373,6 +1435,7 @@ export function startMcpControlServer({
             requestRuntimeRestart,
             config,
             logger,
+            fetchImplementation,
           }).connect(transport);
           await transport.handleRequest(req, res);
           return;
@@ -1400,6 +1463,7 @@ export function startMcpControlServer({
             requestRuntimeRestart,
             config,
             logger,
+            fetchImplementation,
           }).connect(transport);
           await transport.handleRequest(req, res);
           return;
@@ -1433,6 +1497,7 @@ export function startMcpControlServer({
           requestRuntimeRestart,
           config,
           logger,
+          fetchImplementation,
         }).connect(transport);
         return;
       }
