@@ -4,8 +4,10 @@ import {
   DEFAULT_BACKOFF_SCHEDULE,
   normalizeBackoffSchedule,
 } from "./backoff.js";
+import { buildRelayWakePrompt } from "./wake-prompt.js";
 
 const ALARM_NAME = "chat-relay-wake-poll";
+let checkInFlight = null;
 
 const DEFAULTS = {
   enabled: false,
@@ -27,6 +29,9 @@ const runtimeStatus = {
   pendingCount: null,
   activeCount: null,
   lastWakeAt: null,
+  lastTrigger: null,
+  lastAlarmAt: null,
+  nextAlarmAt: null,
   unresolvedAttempts: 0,
   backoffUntil: null,
 };
@@ -68,10 +73,24 @@ function updateRuntimeStatus(patch) {
 async function configureAlarm() {
   const settings = await getSettings();
   await chrome.alarms.clear(ALARM_NAME);
-  if (!settings.enabled) return;
+  if (!settings.enabled) {
+    updateRuntimeStatus({ nextAlarmAt: null });
+    return;
+  }
   chrome.alarms.create(ALARM_NAME, {
     delayInMinutes: 0.5,
     periodInMinutes: settings.pollMinutes,
+  });
+  const alarm = await chrome.alarms.get(ALARM_NAME);
+  if (!alarm) throw new Error("Chrome did not create the automatic relay alarm");
+  updateRuntimeStatus({ nextAlarmAt: alarm.scheduledTime || null });
+}
+
+async function reportAlarmConfigurationError(error) {
+  updateRuntimeStatus({
+    state: "error",
+    message: `Could not schedule automatic checks: ${error instanceof Error ? error.message : String(error)}`,
+    nextAlarmAt: null,
   });
 }
 
@@ -155,7 +174,7 @@ async function wakeTarget(settings, reason) {
     return await chrome.tabs.sendMessage(tab.id, {
       type: "chat-relay:wake",
       payload: {
-        prompt: settings.wakePrompt,
+        prompt: buildRelayWakePrompt(settings.wakePrompt),
         autoSubmit: settings.autoSubmit,
         reason,
       },
@@ -168,9 +187,16 @@ async function wakeTarget(settings, reason) {
   }
 }
 
-async function checkRelay({ force = false } = {}) {
+async function checkRelay({ force = false, source = "manual" } = {}) {
   const settings = await getSettings();
   const checkedAt = Date.now();
+  const alarm = await chrome.alarms.get(ALARM_NAME);
+  updateRuntimeStatus({
+    checkedAt,
+    lastTrigger: source,
+    lastAlarmAt: source === "alarm" ? checkedAt : runtimeStatus.lastAlarmAt,
+    nextAlarmAt: alarm?.scheduledTime || null,
+  });
 
   if (!settings.enabled) {
     updateRuntimeStatus({ state: "disabled", message: "Wake relay is disabled", checkedAt });
@@ -224,10 +250,10 @@ async function checkRelay({ force = false } = {}) {
     }
 
     const cooldownRemaining = settings.cooldownSeconds * 1000 - (Date.now() - Number(stored.lastWakeAt || 0));
-    if (!force && cooldownRemaining > 0) {
+    if (!force && circuit && cooldownRemaining > 0) {
       updateRuntimeStatus({
         state: "cooldown",
-        message: `Pending work found; cooldown has ${Math.ceil(cooldownRemaining / 1000)}s remaining`,
+        message: `The same unresolved item is cooling down for ${Math.ceil(cooldownRemaining / 1000)}s`,
       });
       return runtimeStatus;
     }
@@ -268,28 +294,67 @@ async function checkRelay({ force = false } = {}) {
   return runtimeStatus;
 }
 
+function runRelayCheck(options) {
+  if (checkInFlight) return checkInFlight;
+  checkInFlight = checkRelay(options).finally(() => {
+    checkInFlight = null;
+  });
+  return checkInFlight;
+}
+
+async function handleTargetHeartbeat(sender) {
+  const settings = await getSettings();
+  if (!settings.enabled) return runtimeStatus;
+  if (normalizedTaskUrl(sender?.tab?.url || "") !== normalizedTaskUrl(settings.targetUrl)) {
+    return runtimeStatus;
+  }
+
+  const now = Date.now();
+  const stored = await chrome.storage.local.get({ lastHeartbeatCheckAt: 0 });
+  const intervalMs = settings.pollMinutes * 60_000;
+  if (now - Number(stored.lastHeartbeatCheckAt || 0) < intervalMs) return runtimeStatus;
+
+  // Reserve this interval before the asynchronous fetch so duplicate task tabs
+  // cannot start the same poll concurrently.
+  await chrome.storage.local.set({ lastHeartbeatCheckAt: now });
+  return runRelayCheck({ source: "heartbeat" });
+}
+
 chrome.runtime.onInstalled.addListener(() => {
-  configureAlarm().catch(() => {});
+  configureAlarm().catch(reportAlarmConfigurationError);
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  configureAlarm().catch(() => {});
+  configureAlarm().catch(reportAlarmConfigurationError);
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === ALARM_NAME) checkRelay().catch(() => {});
+  if (alarm.name === ALARM_NAME) {
+    runRelayCheck({ source: "alarm" }).catch((error) =>
+      updateRuntimeStatus({
+        state: "error",
+        message: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  }
 });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== "local") return;
   if (Object.keys(changes).some((key) => key in DEFAULTS)) {
-    configureAlarm().catch(() => {});
+    configureAlarm().catch(reportAlarmConfigurationError);
   }
 });
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "chat-relay:check-now") {
-    checkRelay({ force: Boolean(message.force) }).then(sendResponse);
+    runRelayCheck({ force: Boolean(message.force), source: message.force ? "force" : "manual" }).then(sendResponse);
+    return true;
+  }
+  if (message?.type === "chat-relay:heartbeat") {
+    handleTargetHeartbeat(sender).then(sendResponse).catch((error) =>
+      sendResponse({ state: "error", message: error instanceof Error ? error.message : String(error) }),
+    );
     return true;
   }
   if (message?.type === "chat-relay:get-status") {
@@ -299,4 +364,4 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return false;
 });
 
-configureAlarm().catch(() => {});
+configureAlarm().catch(reportAlarmConfigurationError);

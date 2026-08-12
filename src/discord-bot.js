@@ -126,6 +126,37 @@ async function isReplyToBot(message, botUser) {
   }
 }
 
+export async function resolveRelayReplyTo(message, botUser) {
+  const messageId = String(message.reference?.messageId || "");
+  if (!messageId) return null;
+
+  const fallback = {
+    messageId,
+    channelId: String(message.reference?.channelId || message.channelId || "") || null,
+    guildId: String(message.reference?.guildId || message.guildId || "") || null,
+    resolved: false,
+    author: null,
+    content: null,
+  };
+
+  try {
+    const referenced = await message.channel.messages.fetch(messageId);
+    return {
+      ...fallback,
+      resolved: true,
+      author: {
+        id: String(referenced.author?.id || ""),
+        username: String(referenced.author?.username || ""),
+        displayName: displayName(referenced),
+        bot: referenced.author?.bot === true,
+      },
+      content: cleanContent(referenced, botUser).slice(0, 2_000),
+    };
+  } catch {
+    return fallback;
+  }
+}
+
 // Routes a delegation at this checkout instead of the scratch workspace when the task
 // names it. The marker is the project folder name, never a hardcoded repository name.
 export function mentionsProjectWorkspace(task, config) {
@@ -998,6 +1029,7 @@ export function createDiscordBot({
             !audioModeCommand &&
             !imageRequest &&
             !codexRequest &&
+            config.chatProvider !== "none" &&
             visionAnalyzer
           ) {
             try {
@@ -1211,9 +1243,11 @@ export function createDiscordBot({
               xPostObservation,
             );
             if (config.chatProvider === "none" && chatRelay?.enabled) {
+              const replyTo = await resolveRelayReplyTo(message, client.user);
               const relayId = chatRelay.enqueue({
                 message,
                 context,
+                replyTo,
                 kind: spontaneous ? "spontaneous" : "direct",
                 directResponse,
                 spontaneous,

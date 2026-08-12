@@ -18,6 +18,8 @@ function baseConfig(overrides = {}) {
     contextMessages: 5,
     contextTimestamps: false,
     timeZone: "UTC",
+    chatProvider: "nanogpt",
+    chatModel: "test-model",
     nanoGptModel: "test-model",
     visionModel: "test-vision",
     memoryInjectionMaxItems: 6,
@@ -47,7 +49,12 @@ function baseConfig(overrides = {}) {
   };
 }
 
-function createHarness({ config = baseConfig(), postText = "A downloaded post" } = {}) {
+function createHarness({
+  config = baseConfig(),
+  postText = "A downloaded post",
+  visionAnalyzer = null,
+  chatRelay = null,
+} = {}) {
   const contexts = [];
   const completions = [];
   const fetched = [];
@@ -70,6 +77,8 @@ function createHarness({ config = baseConfig(), postText = "A downloaded post" }
       maxPosts: config.xPrefetchMaxPosts,
       maxChars: config.xPrefetchMaxChars,
     }),
+    visionAnalyzer,
+    chatRelay,
     runtimeControl: {
       maintenanceEnabled: false,
       observationEnabled: false,
@@ -82,7 +91,7 @@ function createHarness({ config = baseConfig(), postText = "A downloaded post" }
   client.user = { id: "111111111111111111", tag: "Bot#0001" };
 
   let counter = 0;
-  const emit = (author, content, { dm = false } = {}) => {
+  const emit = (author, content, { dm = false, attachments = new Map() } = {}) => {
     counter += 1;
     const index = counter;
     client.emit(Events.MessageCreate, {
@@ -94,7 +103,7 @@ function createHarness({ config = baseConfig(), postText = "A downloaded post" }
       member: null,
       webhookId: null,
       createdTimestamp: Date.now(),
-      attachments: new Map(),
+      attachments,
       mentions: { has: () => content.includes("@bot") },
       reference: null,
       channel: {
@@ -183,4 +192,40 @@ test("a disabled prefetch gate downloads nothing", async () => {
 
   assert.deepEqual(harness.fetched, []);
   assert.doesNotMatch(userTurn(harness.contexts.at(-1)), /post download/);
+});
+
+test("provider-free relay mode preserves images without running local vision", async () => {
+  let visionCalls = 0;
+  let queuedMessage = null;
+  const chatRelay = {
+    enabled: true,
+    setDeliveryHandlers: () => undefined,
+    enqueue({ message }) {
+      queuedMessage = message;
+      return "relay-image";
+    },
+  };
+  const attachments = new Map([
+    ["image", {
+      url: "https://cdn.discordapp.com/attachments/channel/message/photo.png",
+      name: "photo.png",
+      contentType: "image/png",
+    }],
+  ]);
+  const harness = createHarness({
+    config: baseConfig({ chatProvider: "none", chatModel: "none" }),
+    chatRelay,
+    visionAnalyzer: {
+      async analyze() {
+        visionCalls += 1;
+        return "local image description";
+      },
+    },
+  });
+
+  harness.emit(STRANGER, "@bot what is in this image?", { attachments });
+  await harness.settle();
+
+  assert.equal(visionCalls, 0);
+  assert.equal(queuedMessage?.attachments, attachments);
 });

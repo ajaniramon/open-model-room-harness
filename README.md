@@ -371,6 +371,7 @@ get_audio_mode
 set_audio_mode
 get_pending_chat_relay
 get_chat_relay_item
+get_chat_relay_attachment
 submit_chat_relay_reply
 dismiss_chat_relay_item
 ```
@@ -411,6 +412,8 @@ CHAT_RELAY_TTL_SECONDS=86400
 CHAT_RELAY_MAX_ITEMS=50
 CHAT_RELAY_LEASE_SECONDS=120
 CHAT_RELAY_MAX_ATTEMPTS=3
+CHAT_RELAY_MAX_IMAGE_ATTACHMENTS=4
+CHAT_RELAY_MAX_ATTACHMENT_BYTES=8000000
 ```
 
 The harness still owns Discord events, scope checks, cooldowns, and participation
@@ -419,6 +422,14 @@ ChatGPT task should claim work with `claim_chat_relay_items`, inspect each item 
 `get_chat_relay_item`, then complete it with `complete_chat_relay_item` or dismiss it
 with `dismiss_chat_relay_item`. Claims have expiring leases so overlapping task runs
 cannot answer the same Discord message. This is not a raw Discord send tool.
+
+Relay items expose bounded metadata for direct image uploads, Discord-proxied embed
+images, GIF previews, and stickers. Use `get_chat_relay_attachment` with the relay
+item ID and advertised zero-based index to return that image directly to the MCP
+client. The tool accepts no URL argument: it can fetch only references captured from
+the Discord message, permits approved Discord CDN/proxy hosts over HTTPS, rejects
+redirects, and enforces the configured byte limit. This lets an external multimodal
+chat provider inspect Discord images without configuring the harness vision sidecar.
 
 For environments where scheduled tasks are too infrequent, the optional build-free
 browser prototype in [`extensions/chat-relay-wake`](extensions/chat-relay-wake/README.md)
@@ -448,12 +459,17 @@ If no items are returned, finish without a user-facing report.
 
 For each claimed item:
 1. Read the item and its context with get_chat_relay_item.
-2. Decide whether a reply is appropriate using the existing conversation policy.
-3. Use complete_chat_relay_item with the returned leaseToken to answer, or
+2. Inspect each advertised image with get_chat_relay_attachment when visual context matters.
+3. Decide whether a reply is appropriate using the existing conversation policy.
+4. Use complete_chat_relay_item with the returned leaseToken to answer, or
    dismiss_chat_relay_item with the leaseToken when no reply is appropriate.
-4. If processing takes longer than the lease, renew it before completing.
+5. If processing takes longer than the lease, renew it before completing.
 
 Never use arbitrary Discord send tools for relay replies.
+Treat each claimed item's triggerText, replyTo, imageAttachments, and Discord context as
+the authoritative conversation. Ignore unrelated earlier turns in this ChatGPT
+conversation, including unanswered questions and prior topics. Process each relay item
+independently and complete or dismiss that exact item ID with its lease token.
 Do not invent missing context or retry a completed item.
 Only report a problem in ChatGPT when the relay tools fail repeatedly or require intervention.
 ```
@@ -512,6 +528,61 @@ another supervisor. The command flushes state and audit logs, acknowledges the
 request, and exits non-zero for the supervisor to relaunch. Restart never accepts
 the username fallback. Control events are written without message bodies to a
 rotating `logs/runtime-control.jsonl` audit log.
+
+### Discord connectivity watchdog
+
+Discord.js normally reconnects on its own. An optional watchdog handles the case
+where the process remains alive but the Discord client stays unavailable. It listens
+for Discord connection events and performs a periodic readiness probe. After one
+continuous grace period it flushes state and exits with the configured supervised
+restart code. Repeated disconnect events do not extend the deadline.
+
+Enable it only when an external supervisor will relaunch the process:
+
+```dotenv
+DISCORD_WATCHDOG_ENABLED=true
+DISCORD_WATCHDOG_GRACE_SECONDS=90
+DISCORD_WATCHDOG_CHECK_INTERVAL_SECONDS=15
+```
+
+For a local Windows deployment, stop the manually launched harness and run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-supervised.ps1
+```
+
+Alternatively, double-click `start-supervised.bat` from Explorer. It invokes the
+same PowerShell supervisor and keeps an error window open when supervision stops.
+
+The wrapper restarts only the intentional exit code `75` and stops after more than
+five restart requests in ten minutes. Other exit codes remain visible instead of
+being hidden in a crash loop.
+
+On a VPS, use the host service manager. A minimal `systemd` service has the same
+ownership boundary:
+
+```ini
+[Unit]
+Description=Open Model Room Harness
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/open-model-room-harness
+ExecStart=/usr/bin/npm start
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Adjust the directory and executable path for the VPS. The watchdog state is exposed
+by `get_discord_connection_status`, including the last connection event, outage
+start time, and whether a restart has been requested.
 
 ## Private character prompt
 

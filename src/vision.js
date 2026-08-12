@@ -4,14 +4,78 @@ const SUPPORTED_IMAGE_TYPES = new Set([
   "image/png",
   "image/webp",
 ]);
+const RELAY_IMAGE_TYPES = new Set([...SUPPORTED_IMAGE_TYPES, "image/gif"]);
 
-function normalizedImageType(attachment, response) {
+function approvedDiscordImageUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    if (url.protocol !== "https:") return null;
+    const hostname = url.hostname.toLowerCase();
+    return (
+      hostname === "cdn.discordapp.com" ||
+      hostname === "media.discordapp.net" ||
+      /^images-ext-\d+\.discordapp\.net$/.test(hostname)
+    ) ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+async function readBoundedImage(response, maxBytes, limitName) {
+  const declaredLength = Number(response.headers.get("content-length") || 0);
+  if (declaredLength > maxBytes) throw new Error(`Discord image exceeds the ${maxBytes}-byte ${limitName} limit.`);
+  if (!response.body?.getReader) {
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (!bytes.length || bytes.length > maxBytes) {
+      throw new Error(`Discord image is empty or exceeds the ${maxBytes}-byte ${limitName} limit.`);
+    }
+    return bytes;
+  }
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let size = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > maxBytes) {
+      await reader.cancel().catch(() => {});
+      throw new Error(`Discord image exceeds the ${maxBytes}-byte ${limitName} limit.`);
+    }
+    chunks.push(Buffer.from(value));
+  }
+  if (!size) throw new Error("Discord image is empty.");
+  return Buffer.concat(chunks, size);
+}
+
+export async function downloadDiscordImageAttachment(attachment, {
+  fetchImplementation = fetch,
+  maxBytes = 8_000_000,
+  signal,
+  allowGif = false,
+  limitName = "vision",
+} = {}) {
+  const byteLimit = Math.max(1, Number(maxBytes) || 8_000_000);
+  if (Number(attachment?.size || 0) > byteLimit) {
+    throw new Error(
+      `Discord image '${attachment?.name || attachment?.filename || "image"}' exceeds the ${byteLimit}-byte ${limitName} limit.`,
+    );
+  }
+  const url = approvedDiscordImageUrl(attachment?.url);
+  if (!url) throw new Error("Discord image must use an approved HTTPS Discord CDN or proxy URL.");
+  const response = await fetchImplementation(url, { signal, redirect: "error" });
+  if (!response.ok) throw new Error(`Discord image download returned HTTP ${response.status}.`);
+
+  const allowedTypes = allowGif ? RELAY_IMAGE_TYPES : SUPPORTED_IMAGE_TYPES;
+  const received = String(response.headers.get("content-type") || "").split(";")[0].toLowerCase();
   const declared = String(attachment?.contentType || "").split(";")[0].toLowerCase();
-  const received = String(response?.headers?.get("content-type") || "")
-    .split(";")[0]
-    .toLowerCase();
-  const type = SUPPORTED_IMAGE_TYPES.has(received) ? received : declared;
-  return SUPPORTED_IMAGE_TYPES.has(type) ? type : null;
+  const mimeType = allowedTypes.has(received)
+    ? received
+    : (!received || received === "application/octet-stream" ? declared : null);
+  if (!allowedTypes.has(mimeType)) throw new Error("Discord attachment is not a supported image.");
+  const bytes = await readBoundedImage(response, byteLimit, limitName);
+  return { bytes, mimeType };
 }
 
 export function supportedVisionAttachments(message, maxImages = 4) {
@@ -48,31 +112,15 @@ export class VisionAnalyzer {
     try {
       const imageParts = [];
       for (const attachment of attachments) {
-        if (Number(attachment.size || 0) > this.maxBytes) {
-          throw new Error(
-            `Discord image '${attachment.name || "image"}' exceeds the ${this.maxBytes}-byte vision limit.`,
-          );
-        }
-        const url = new URL(attachment.url);
-        if (url.protocol !== "https:") {
-          throw new Error("Discord vision attachments must use HTTPS.");
-        }
-        const response = await this.fetch(url, {
+        const image = await downloadDiscordImageAttachment(attachment, {
+          fetchImplementation: this.fetch,
+          maxBytes: this.maxBytes,
           signal: controller.signal,
-          redirect: "error",
+          limitName: "vision",
         });
-        if (!response.ok) {
-          throw new Error(`Discord image download returned HTTP ${response.status}.`);
-        }
-        const mime = normalizedImageType(attachment, response);
-        if (!mime) throw new Error("Discord attachment is not a supported vision image.");
-        const bytes = Buffer.from(await response.arrayBuffer());
-        if (!bytes.length || bytes.length > this.maxBytes) {
-          throw new Error("Discord image is empty or exceeds the vision upload limit.");
-        }
         imageParts.push({
           type: "image_url",
-          image_url: { url: `data:${mime};base64,${bytes.toString("base64")}` },
+          image_url: { url: `data:${image.mimeType};base64,${image.bytes.toString("base64")}` },
         });
       }
 

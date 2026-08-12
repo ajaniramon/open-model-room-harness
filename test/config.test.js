@@ -73,5 +73,10 @@ test("loads neutral participation defaults without a private owner", () => {
   assert.equal(config.ownerUsernames.size, 0);
   assert.equal(config.runtimeControlEnabled, true);
   assert.equal(config.runtimeControlRestartEnabled, false);
+  assert.deepEqual(config.discordWatchdog, {
+    enabled: false,
+    graceMs: 90_000,
+    checkIntervalMs: 15_000,
+  });
   assert.match(config.runtimeControlAudit.path, /runtime-control\.jsonl$/);
 });

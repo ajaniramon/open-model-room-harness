@@ -8,6 +8,8 @@ function render(status = {}) {
   document.querySelector("#status").textContent = status.message || "No status available";
   document.querySelector("#pending").textContent = Number.isInteger(status.pendingCount) ? status.pendingCount : "-";
   document.querySelector("#checked").textContent = formatTime(status.checkedAt);
+  document.querySelector("#trigger").textContent = status.lastTrigger || "-";
+  document.querySelector("#next").textContent = formatTime(status.nextAlarmAt);
   document.querySelector("#retry").textContent = formatTime(status.backoffUntil);
   document.querySelector("#attempts").textContent = Number(status.unresolvedAttempts || 0);
 }

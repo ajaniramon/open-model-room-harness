@@ -34,8 +34,10 @@ function createTestServer(overrides = {}) {
     audioConfigured: overrides.audioConfigured,
     chatRelay: overrides.chatRelay,
     discordClient: overrides.discordClient,
+    discordWatchdog: overrides.discordWatchdog,
     auditLogger: overrides.auditLogger,
     logger: { info: () => undefined, error: () => undefined },
+    fetchImplementation: overrides.fetchImplementation,
   });
 }
 
@@ -703,7 +705,7 @@ test("MCP control server exposes tool discovery metadata", async () => {
         includeArguments: true,
       })).result.content[0].text,
     );
-    assert.equal(discovered.total, 7);
+    assert.equal(discovered.total, 8);
     assert.ok(discovered.categories.includes("discovery"));
     assert.deepEqual(
       discovered.tools.map((tool) => tool.name),
@@ -711,6 +713,7 @@ test("MCP control server exposes tool discovery metadata", async () => {
         "get_pending_chat_relay",
         "claim_chat_relay_items",
         "get_chat_relay_item",
+        "get_chat_relay_attachment",
         "submit_chat_relay_reply",
         "renew_chat_relay_lease",
         "complete_chat_relay_item",
@@ -813,7 +816,15 @@ test("MCP control server exposes Discord guild and channel discovery", async () 
       fetch: async () => guild,
     },
   };
-  const server = createTestServer({ discordClient });
+  const discordWatchdog = {
+    status: () => ({
+      enabled: true,
+      started: true,
+      ready: true,
+      restartRequested: false,
+    }),
+  };
+  const server = createTestServer({ discordClient, discordWatchdog });
   try {
     await new Promise((resolve) => setTimeout(resolve, 25));
     const { port } = server.address();
@@ -822,6 +833,12 @@ test("MCP control server exposes Discord guild and channel discovery", async () 
     );
     assert.equal(status.ready, true);
     assert.equal(status.user.id, "bot-1");
+    assert.deepEqual(status.watchdog, {
+      enabled: true,
+      started: true,
+      ready: true,
+      restartRequested: false,
+    });
 
     const guilds = JSON.parse(
       (await callTool(port, "list_discord_guilds")).result.content[0].text,
@@ -929,6 +946,75 @@ test("MCP control server can inspect and submit chat relay items", async () => {
       ["renew", "relay-1", "lease-1"],
       ["dismiss", "relay-1", "skip", "lease-1"],
     ]);
+  } finally {
+    await server.close();
+  }
+});
+
+test("MCP control server returns relay attachments as image content", async () => {
+  const chatRelay = {
+    getImageAttachment: (id, index) => id === "relay-1" && index === 0
+      ? {
+          source: "attachment",
+          filename: "photo.png",
+          contentType: "image/png",
+          size: 4,
+          url: "https://cdn.discordapp.com/attachments/channel/message/photo.png",
+        }
+      : null,
+  };
+  const server = createTestServer({
+    chatRelay,
+    config: { chatRelay: { maxAttachmentBytes: 1024 } },
+    fetchImplementation: async () => new Response(Buffer.from([1, 2, 3, 4]), {
+      headers: { "content-type": "image/png", "content-length": "4" },
+    }),
+  });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const { port } = server.address();
+    const result = (await callTool(port, "get_chat_relay_attachment", { id: "relay-1", index: 0 })).result;
+    assert.deepEqual(result.content[0], {
+      type: "image",
+      data: "AQIDBA==",
+      mimeType: "image/png",
+    });
+    const metadata = JSON.parse(result.content[1].text);
+    assert.equal(metadata.filename, "photo.png");
+    assert.equal(metadata.size, 4);
+
+    const missing = (await callTool(port, "get_chat_relay_attachment", { id: "relay-1", index: 1 })).result;
+    assert.equal(missing.isError, true);
+  } finally {
+    await server.close();
+  }
+});
+
+test("MCP relay attachment fetch honors the queue byte limit", async () => {
+  const bytes = Buffer.alloc(1_500, 1);
+  const chatRelay = {
+    maxAttachmentBytes: 1_024,
+    getImageAttachment: () => ({
+      source: "attachment",
+      filename: "large.png",
+      contentType: "image/png",
+      size: bytes.length,
+      url: "https://cdn.discordapp.com/attachments/channel/message/large.png",
+    }),
+  };
+  const server = createTestServer({
+    chatRelay,
+    config: { chatRelay: { maxAttachmentBytes: 2_000 } },
+    fetchImplementation: async () => new Response(bytes, {
+      headers: { "content-type": "image/png", "content-length": String(bytes.length) },
+    }),
+  });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const { port } = server.address();
+    const result = (await callTool(port, "get_chat_relay_attachment", { id: "relay-1", index: 0 })).result;
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /1024-byte relay limit/);
   } finally {
     await server.close();
   }

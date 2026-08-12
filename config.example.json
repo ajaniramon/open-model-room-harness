@@ -1,4 +1,11 @@
 {
+  "discord": {
+    "watchdog": {
+      "enabled": false,
+      "graceSeconds": 90,
+      "checkIntervalSeconds": 15
+    }
+  },
   "permissions": {
     "owner": {
       "allowedUserIds": [],
@@ -70,6 +77,17 @@
     "enabled": true,
     "maxPosts": 2,
     "maxChars": 1200
+  },
+  "chatRelay": {
+    "enabled": false,
+    "statePath": "state/chat-relay.json",
+    "ttlSeconds": 86400,
+    "maxItems": 50,
+    "maxContextChars": 12000,
+    "leaseSeconds": 120,
+    "maxAttempts": 3,
+    "maxImageAttachments": 4,
+    "maxAttachmentBytes": 8000000
   },
   "memory": {
     "enabled": false,

@@ -10,6 +10,7 @@ import {
   createWakeCircuitState,
   normalizeBackoffSchedule,
 } from "../backoff.js";
+import { buildRelayWakePrompt } from "../wake-prompt.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
@@ -19,7 +20,9 @@ async function read(relativePath) {
 
 test("manifest references files that exist", async () => {
   const manifest = JSON.parse(await read("manifest.json"));
+  const packageMetadata = JSON.parse(await read("package.json"));
   assert.equal(manifest.manifest_version, 3);
+  assert.equal(manifest.version, packageMetadata.version);
   assert.equal(manifest.background.service_worker, "background.js");
 
   const referencedFiles = [
@@ -30,6 +33,44 @@ test("manifest references files that exist", async () => {
   ];
 
   await Promise.all(referencedFiles.map((path) => read(path)));
+});
+
+test("popup exposes automatic alarm diagnostics", async () => {
+  const [background, popup] = await Promise.all([
+    read("background.js"),
+    read("popup.html"),
+  ]);
+  assert.match(background, /lastTrigger: source/);
+  assert.match(background, /nextAlarmAt: alarm\?\.scheduledTime/);
+  assert.match(popup, /id="trigger"/);
+  assert.match(popup, /id="next"/);
+});
+
+test("configured task heartbeat supplements throttled Chrome alarms", async () => {
+  const [background, content] = await Promise.all([
+    read("background.js"),
+    read("content.js"),
+  ]);
+  assert.match(content, /chat-relay:heartbeat/);
+  assert.match(content, /HEARTBEAT_INTERVAL_MS = 15_000/);
+  assert.match(background, /normalizedTaskUrl\(sender\?\.tab\?\.url/);
+  assert.match(background, /lastHeartbeatCheckAt/);
+  assert.match(background, /source: "heartbeat"/);
+  assert.match(background, /checkInFlight/);
+});
+
+test("wake cooldown does not delay a newly arrived relay item", async () => {
+  const background = await read("background.js");
+  assert.match(background, /if \(!force && circuit && cooldownRemaining > 0\)/);
+  assert.match(background, /same unresolved item is cooling down/);
+});
+
+test("every wake prompt rejects unrelated persistent-chat history", () => {
+  const prompt = buildRelayWakePrompt("Check now.");
+  assert.match(prompt, /^Check now\./);
+  assert.match(prompt, /triggerText, replyTo, imageAttachments/);
+  assert.match(prompt, /Ignore unrelated earlier turns in this ChatGPT conversation/);
+  assert.match(prompt, /exact claimed relay item/);
 });
 
 test("extension scripts pass Node syntax checks", () => {

@@ -76,10 +76,20 @@ period. If the same oldest relay item is still pending when that period ends, it
 wakes ChatGPT once more and advances to the next period. The default schedule is
 5, 15, 30, then 60 minutes; the final value is reused for later attempts.
 
+The wake cooldown applies only while retrying that same unresolved item. A newly
+arrived oldest item is eligible on the next poll instead of inheriting the previous
+item's cooldown.
+
 The breaker resets as soon as the queue empties or a different item becomes the
 oldest active item. A leased item remains active, so a worker crash cannot reset
 the breaker before its lease expires. The popup shows the unresolved wake count and retry time.
 `Save and force check` in settings is the explicit manual override.
+
+The configured ChatGPT task tab also sends a lightweight heartbeat every 15 seconds.
+When the selected poll interval is due, that heartbeat wakes the service worker to
+check the harness. Chrome alarms remain as a fallback because Manifest V3 may defer
+them for several minutes. The popup's `Last trigger` field identifies whether the
+latest check came from `heartbeat`, `alarm`, `manual`, or `force`.
 
 This is outcome-based and deliberately does not scrape ChatGPT output for usage-limit
 messages. Polling the small status endpoint continues while prompt submission is
@@ -95,3 +105,6 @@ unattended deployment, `CHAT_RELAY_TTL_SECONDS=86400` is a practical starting po
 - No automatic tab activation.
 
 This prototype uses DOM interaction only for the missing wake step. Once awake, the normal ChatGPT connector and harness relay tools take over.
+
+Every injected wake prompt includes a worker contract that makes the claimed Discord
+item authoritative and tells ChatGPT to ignore unrelated history in the persistent task.

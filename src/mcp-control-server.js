@@ -6,6 +6,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
+import { fetchRelayImageAttachment } from "./chat-relay-attachments.js";
 import {
   clearDiscordScope,
   listDiscordScopes,
@@ -433,7 +434,7 @@ const TOOL_CATALOG = Object.freeze([
     name: "claim_chat_relay_items",
     category: "chat-relay",
     safety: "runtime-write",
-    description: "Atomically claim pending Discord turns for one external chat worker.",
+    description: "Atomically claim pending Discord turns for one external chat worker. Each claimed item is authoritative; ignore unrelated chat-session history.",
     arguments: {
       workerId: "Stable worker identity.",
       limit: "Maximum number of items to claim.",
@@ -445,9 +446,19 @@ const TOOL_CATALOG = Object.freeze([
     name: "get_chat_relay_item",
     category: "chat-relay",
     safety: "read-only",
-    description: "Get one pending Discord relay item including context.",
+    description: "Get one pending Discord relay item including its trigger, Discord reply reference, images, and context.",
     arguments: {
       id: "Relay item ID.",
+    },
+  },
+  {
+    name: "get_chat_relay_attachment",
+    category: "chat-relay",
+    safety: "read-only",
+    description: "Fetch one image attached to a pending or leased Discord relay item.",
+    arguments: {
+      id: "Relay item ID.",
+      index: "Zero-based image attachment index from the relay item.",
     },
   },
   {
@@ -476,7 +487,7 @@ const TOOL_CATALOG = Object.freeze([
     name: "complete_chat_relay_item",
     category: "chat-relay",
     safety: "runtime-write",
-    description: "Complete a claimed Discord relay item by delivering a reply.",
+    description: "Complete the same claimed Discord relay item with a reply based only on that item's data.",
     arguments: {
       id: "Relay item ID.",
       reply: "Reply text to send through the Discord harness.",
@@ -511,6 +522,10 @@ function publicToolInfo(tool, { includeArguments = false } = {}) {
 
 function resolveDiscordClient(discordClient) {
   return typeof discordClient === "function" ? discordClient() : discordClient;
+}
+
+function resolveDiscordWatchdog(discordWatchdog) {
+  return typeof discordWatchdog === "function" ? discordWatchdog() : discordWatchdog;
 }
 
 function discordReady(client) {
@@ -593,12 +608,14 @@ function createMcpServer({
   audioConfigured = false,
   chatRelay = null,
   discordClient = null,
+  discordWatchdog = null,
   getDiscordScopes = () => config.discordScopes || {},
   updateDiscordScopes = () => undefined,
   auditLogger = null,
   requestRuntimeRestart = null,
   config,
   logger = console,
+  fetchImplementation = fetch,
 }) {
   const server = new McpServer({
     name: "behavior-mode-control",
@@ -641,7 +658,12 @@ function createMcpServer({
         },
         {
           goal: "Answer queued Discord turns through an external chat provider",
-          tools: ["claim_chat_relay_items", "get_chat_relay_item", "complete_chat_relay_item"],
+          tools: [
+            "claim_chat_relay_items",
+            "get_chat_relay_item",
+            "get_chat_relay_attachment",
+            "complete_chat_relay_item",
+          ],
         },
       ],
       notes: [
@@ -653,6 +675,7 @@ function createMcpServer({
 
   server.tool("get_discord_connection_status", "Get safe Discord client status and bot identity.", {}, async () => {
     const client = resolveDiscordClient(discordClient);
+    const watchdog = resolveDiscordWatchdog(discordWatchdog);
     return textResult({
       configured: Boolean(client),
       ready: discordReady(client),
@@ -664,6 +687,10 @@ function createMcpServer({
           }
         : null,
       guilds: client?.guilds?.cache?.size ?? null,
+      watchdog: watchdog?.status?.() || {
+        enabled: false,
+        started: false,
+      },
     });
   });
 
@@ -1218,7 +1245,7 @@ function createMcpServer({
   }, async ({ includeContext = false }) =>
     textResult(chatRelay?.pending?.({ includeContext }) || []));
 
-  server.tool("claim_chat_relay_items", "Atomically claim pending Discord turns for an external chat worker.", {
+  server.tool("claim_chat_relay_items", "Atomically claim pending Discord turns. Treat each returned item as authoritative and ignore unrelated chat-session history.", {
     workerId: z.string().min(1).max(100),
     limit: z.number().int().min(1).max(50).optional(),
     leaseSeconds: z.number().int().min(10).max(3_600).optional(),
@@ -1229,9 +1256,53 @@ function createMcpServer({
       : [],
   ));
 
-  server.tool("get_chat_relay_item", "Get one pending Discord relay item including context.", {
+  server.tool("get_chat_relay_item", "Get one pending Discord relay item including its trigger, Discord reply reference, images, and context.", {
     id: z.string(),
   }, async ({ id }) => textResult(chatRelay?.get?.(id, { includeContext: true }) || null));
+
+  server.tool("get_chat_relay_attachment", "Fetch one image attached to a pending or leased Discord relay item.", {
+    id: z.string(),
+    index: z.number().int().min(0).max(9),
+  }, async ({ id, index }) => {
+    const reference = chatRelay?.getImageAttachment?.(id, index);
+    if (!reference) {
+      return {
+        content: [{ type: "text", text: "Relay image attachment was not found or is no longer active." }],
+        isError: true,
+      };
+    }
+    try {
+      const image = await fetchRelayImageAttachment(reference, {
+        fetchImplementation,
+        maxBytes: chatRelay?.maxAttachmentBytes ?? config.chatRelay?.maxAttachmentBytes,
+      });
+      return {
+        content: [
+          { type: "image", data: image.data, mimeType: image.mimeType },
+          {
+            type: "text",
+            text: JSON.stringify({
+              relayItemId: id,
+              index,
+              source: reference.source,
+              filename: reference.filename,
+              mimeType: image.mimeType,
+              size: image.size,
+            }),
+          },
+        ],
+      };
+    } catch (error) {
+      logger.error("MCP chat relay attachment fetch failed", error);
+      return {
+        content: [{
+          type: "text",
+          text: error instanceof Error ? error.message : "Relay image attachment could not be fetched.",
+        }],
+        isError: true,
+      };
+    }
+  });
 
   server.tool("submit_chat_relay_reply", "Submit a reply for a pending Discord relay item.", {
     id: z.string(),
@@ -1252,7 +1323,7 @@ function createMcpServer({
       : { ok: false, error: "Chat relay is not configured." },
   ));
 
-  server.tool("complete_chat_relay_item", "Complete a claimed Discord relay item by delivering a reply.", {
+  server.tool("complete_chat_relay_item", "Complete the same claimed Discord relay item with a reply based only on that item's data.", {
     id: z.string(),
     reply: z.string().min(1).max(8_000),
     leaseToken: z.string().min(1),
@@ -1285,9 +1356,11 @@ export function startMcpControlServer({
   audioConfigured = false,
   chatRelay = null,
   discordClient = null,
+  discordWatchdog = null,
   auditLogger = null,
   requestRuntimeRestart = null,
   logger = console,
+  fetchImplementation = fetch,
 }) {
   if (!config.mcpControl?.enabled) return null;
   if (!behaviorModeController?.enabled) {
@@ -1353,6 +1426,7 @@ export function startMcpControlServer({
             audioConfigured,
             chatRelay,
             discordClient,
+            discordWatchdog,
             getDiscordScopes: () => discordScopes,
             updateDiscordScopes: (nextScopes) => {
               discordScopes = nextScopes;
@@ -1361,6 +1435,7 @@ export function startMcpControlServer({
             requestRuntimeRestart,
             config,
             logger,
+            fetchImplementation,
           }).connect(transport);
           await transport.handleRequest(req, res);
           return;
@@ -1379,6 +1454,7 @@ export function startMcpControlServer({
             audioConfigured,
             chatRelay,
             discordClient,
+            discordWatchdog,
             getDiscordScopes: () => discordScopes,
             updateDiscordScopes: (nextScopes) => {
               discordScopes = nextScopes;
@@ -1387,6 +1463,7 @@ export function startMcpControlServer({
             requestRuntimeRestart,
             config,
             logger,
+            fetchImplementation,
           }).connect(transport);
           await transport.handleRequest(req, res);
           return;
@@ -1411,6 +1488,7 @@ export function startMcpControlServer({
           audioConfigured,
           chatRelay,
           discordClient,
+          discordWatchdog,
           getDiscordScopes: () => discordScopes,
           updateDiscordScopes: (nextScopes) => {
             discordScopes = nextScopes;
@@ -1419,6 +1497,7 @@ export function startMcpControlServer({
           requestRuntimeRestart,
           config,
           logger,
+          fetchImplementation,
         }).connect(transport);
         return;
       }

@@ -571,6 +571,33 @@ export const config = Object.freeze({
       min: 1,
       max: 20,
     }),
+    maxImageAttachments: configuredInteger(
+      "chatRelay.maxImageAttachments",
+      "CHAT_RELAY_MAX_IMAGE_ATTACHMENTS",
+      4,
+      { min: 0, max: 10 },
+    ),
+    maxAttachmentBytes: configuredInteger(
+      "chatRelay.maxAttachmentBytes",
+      "CHAT_RELAY_MAX_ATTACHMENT_BYTES",
+      8_000_000,
+      { min: 1_024, max: 20_000_000 },
+    ),
+  }),
+  discordWatchdog: Object.freeze({
+    enabled: configuredBoolean("discord.watchdog.enabled", "DISCORD_WATCHDOG_ENABLED", false),
+    graceMs: configuredInteger(
+      "discord.watchdog.graceSeconds",
+      "DISCORD_WATCHDOG_GRACE_SECONDS",
+      90,
+      { min: 10, max: 3_600 },
+    ) * 1_000,
+    checkIntervalMs: configuredInteger(
+      "discord.watchdog.checkIntervalSeconds",
+      "DISCORD_WATCHDOG_CHECK_INTERVAL_SECONDS",
+      15,
+      { min: 5, max: 300 },
+    ) * 1_000,
   }),
   // Memory is OFF by default. It stores content from a shared room, so an operator
   // has to switch it on deliberately and take on the obligations in README §Memory.

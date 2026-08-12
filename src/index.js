@@ -6,6 +6,7 @@ import { ChatRelayQueue } from "./chat-relay.js";
 import { config } from "./config.js";
 import { CodexRunner } from "./codex-runner.js";
 import { createDiscordBot } from "./discord-bot.js";
+import { DiscordConnectivityWatchdog } from "./discord-watchdog.js";
 import { NanoGptImageClient } from "./image-generation.js";
 import { JJ_VISUAL_IDENTITY_SYSTEM_SECTION } from "./jj-identity.js";
 import { MemoryDigester } from "./memory-digest.js";
@@ -123,12 +124,14 @@ const codexRunner = new CodexRunner({
   yoloWorkspace: config.codexYoloWorkspace,
 });
 let client = null;
+let discordWatchdog = null;
 let mcpControlServer = null;
 let shuttingDown = false;
 const shutdown = async (signal, exitCode = 0) => {
   if (shuttingDown) return;
   shuttingDown = true;
   console.info(`Received ${signal}; disconnecting companion.`);
+  discordWatchdog?.stop();
   client?.destroy();
   await chatRelay?.flush();
   await participationController.close();
@@ -141,9 +144,9 @@ const shutdown = async (signal, exitCode = 0) => {
   await runtimeControl?.close();
   process.exit(exitCode);
 };
-const requestRuntimeRestart = () => {
+const requestRuntimeRestart = (reason = "owner runtime restart") => {
   const timer = setTimeout(
-    () => shutdown("owner runtime restart", config.runtimeControlRestartExitCode),
+    () => shutdown(reason, config.runtimeControlRestartExitCode),
     config.runtimeControlRestartDelayMs,
   );
   timer.unref();
@@ -162,6 +165,7 @@ mcpControlServer = config.mcpControl.enabled
       audioConfigured: elevenLabs.configured,
       chatRelay,
       discordClient: () => client,
+      discordWatchdog: () => discordWatchdog,
       auditLogger: runtimeControlAuditLogger,
     })
   : null;
@@ -184,6 +188,11 @@ client = createDiscordBot({
   requestRuntimeRestart,
   systemPrompt,
 });
+discordWatchdog = new DiscordConnectivityWatchdog({
+  client,
+  ...config.discordWatchdog,
+  requestRestart: requestRuntimeRestart,
+}).start();
 
 process.once("SIGINT", () => shutdown("SIGINT"));
 process.once("SIGTERM", () => shutdown("SIGTERM"));

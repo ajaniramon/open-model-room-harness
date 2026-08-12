@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { ChatRelayQueue } from "../src/chat-relay.js";
+import { fetchRelayImageAttachment } from "../src/chat-relay-attachments.js";
 
 function message(overrides = {}) {
   return {
@@ -53,6 +54,138 @@ test("queues a Discord turn and submits exactly one reply", async () => {
   assert.deepEqual(sent, ["hi back"]);
   assert.equal(queue.size, 0);
   assert.equal((await queue.submit(id, "again")).ok, false);
+});
+
+test("queues bounded image metadata without exposing its Discord URL", () => {
+  const queue = new ChatRelayQueue({
+    enabled: true,
+    maxImageAttachments: 2,
+    maxAttachmentBytes: 2048,
+  });
+  assert.equal(queue.maxImageAttachments, 2);
+  assert.equal(queue.maxAttachmentBytes, 2048);
+  const id = queue.enqueue({
+    message: message({
+      attachments: new Map([
+        ["a1", {
+          url: "https://cdn.discordapp.com/attachments/channel/message/photo.png",
+          name: "photo.png",
+          contentType: "image/png",
+          size: 1234,
+          width: 640,
+          height: 480,
+        }],
+      ]),
+      embeds: [{
+        thumbnail: {
+          url: "https://example.com/untrusted.gif",
+          proxyURL: "https://images-ext-1.discordapp.net/external/example/preview.webp",
+          width: 320,
+          height: 180,
+        },
+      }],
+    }),
+    context: [],
+  });
+
+  const item = queue.get(id);
+  assert.deepEqual(item.imageAttachments, [
+    {
+      index: 0,
+      source: "attachment",
+      filename: "photo.png",
+      contentType: "image/png",
+      size: 1234,
+      width: 640,
+      height: 480,
+    },
+    {
+      index: 1,
+      source: "embed-thumbnail",
+      filename: "embed-thumbnail",
+      contentType: "image/webp",
+      size: null,
+      width: 320,
+      height: 180,
+    },
+  ]);
+  assert.equal(JSON.stringify(item).includes("discordapp"), false);
+  assert.equal(queue.getImageAttachment(id, 0).url, "https://cdn.discordapp.com/attachments/channel/message/photo.png");
+  assert.equal(queue.getImageAttachment(id, 2), null);
+});
+
+test("binds a worker to one relay item and preserves bounded Discord reply context", () => {
+  const queue = new ChatRelayQueue({ enabled: true });
+  const id = queue.enqueue({
+    message: message(),
+    context: [{ role: "user", content: "current Discord context" }],
+    replyTo: {
+      messageId: "referenced-message",
+      channelId: "c1",
+      guildId: "g1",
+      resolved: true,
+      author: {
+        id: "bot-1",
+        username: "assistant",
+        displayName: "Room Assistant",
+        bot: true,
+      },
+      content: "the referenced Discord reply".repeat(100),
+      ignored: "not public",
+    },
+  });
+
+  const item = queue.get(id);
+  assert.equal(item.replyTo.content.length, 2_000);
+  assert.equal(item.replyTo.ignored, undefined);
+  assert.equal(item.workerContract.relayItemId, id);
+  assert.equal(item.workerContract.triggerMessageId, "m1");
+  assert.match(item.workerContract.instruction, /Ignore unrelated earlier ChatGPT turns/);
+  assert.match(item.workerContract.instruction, /same relayItemId/);
+});
+
+test("fetches only bounded images from approved Discord hosts", async () => {
+  const fetched = [];
+  const image = await fetchRelayImageAttachment({
+    url: "https://cdn.discordapp.com/attachments/channel/message/photo.png",
+    contentType: "image/png",
+    size: 4,
+  }, {
+    maxBytes: 10,
+    fetchImplementation: async (url, options) => {
+      fetched.push([url, options.redirect]);
+      return new Response(Buffer.from([1, 2, 3, 4]), {
+        headers: { "content-type": "image/png", "content-length": "4" },
+      });
+    },
+  });
+  assert.equal(image.data, "AQIDBA==");
+  assert.equal(image.mimeType, "image/png");
+  assert.deepEqual(fetched, [["https://cdn.discordapp.com/attachments/channel/message/photo.png", "error"]]);
+
+  await assert.rejects(
+    fetchRelayImageAttachment({ url: "https://example.com/private.png", contentType: "image/png" }),
+    /approved HTTPS Discord CDN or proxy URL/,
+  );
+  await assert.rejects(
+    fetchRelayImageAttachment({
+      url: "https://cdn.discordapp.com/attachments/channel/message/huge.png",
+      contentType: "image/png",
+      size: 1025,
+    }, { maxBytes: 10 }),
+    /exceeds the 1024-byte relay limit/,
+  );
+  await assert.rejects(
+    fetchRelayImageAttachment({
+      url: "https://cdn.discordapp.com/attachments/channel/message/not-image.png",
+      contentType: "image/png",
+    }, {
+      fetchImplementation: async () => new Response("not an image", {
+        headers: { "content-type": "text/html" },
+      }),
+    }),
+    /not a supported image/,
+  );
 });
 
 test("dismisses and expires relay items", async () => {
@@ -151,12 +284,24 @@ test("persists pending items and recovers them after a restart", async () => {
   const statePath = join(root, "chat-relay.json");
   try {
     const first = new ChatRelayQueue({ enabled: true, statePath });
-    const id = first.enqueue({ message: message(), context: [{ role: "user", content: "hello" }] });
+    const id = first.enqueue({
+      message: message({
+        attachments: new Map([["a1", {
+          url: "https://cdn.discordapp.com/attachments/channel/message/photo.png",
+          name: "photo.png",
+          contentType: "image/png",
+          size: 4,
+        }]]),
+      }),
+      context: [{ role: "user", content: "hello" }],
+    });
     await first.flush();
 
     const second = await new ChatRelayQueue({ enabled: true, statePath }).load();
     assert.equal(second.pending()[0].id, id);
     assert.equal(second.get(id).context[0].content, "hello");
+    assert.equal(second.get(id).imageAttachments[0].filename, "photo.png");
+    assert.equal(second.getImageAttachment(id, 0).url.includes("cdn.discordapp.com"), true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

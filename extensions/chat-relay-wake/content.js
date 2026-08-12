@@ -16,6 +16,15 @@ const STOP_BUTTON_SELECTORS = [
   "button[aria-label*='Stop']",
 ];
 
+const HEARTBEAT_INTERVAL_MS = 15_000;
+
+function sendHeartbeat() {
+  chrome.runtime.sendMessage({ type: "chat-relay:heartbeat" }).catch(() => {});
+}
+
+sendHeartbeat();
+setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
+
 function firstMatch(selectors) {
   for (const selector of selectors) {
     const element = document.querySelector(selector);
