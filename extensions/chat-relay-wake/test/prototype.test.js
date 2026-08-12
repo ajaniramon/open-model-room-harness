@@ -19,7 +19,9 @@ async function read(relativePath) {
 
 test("manifest references files that exist", async () => {
   const manifest = JSON.parse(await read("manifest.json"));
+  const packageMetadata = JSON.parse(await read("package.json"));
   assert.equal(manifest.manifest_version, 3);
+  assert.equal(manifest.version, packageMetadata.version);
   assert.equal(manifest.background.service_worker, "background.js");
 
   const referencedFiles = [
@@ -30,6 +32,17 @@ test("manifest references files that exist", async () => {
   ];
 
   await Promise.all(referencedFiles.map((path) => read(path)));
+});
+
+test("popup exposes automatic alarm diagnostics", async () => {
+  const [background, popup] = await Promise.all([
+    read("background.js"),
+    read("popup.html"),
+  ]);
+  assert.match(background, /lastTrigger: source/);
+  assert.match(background, /nextAlarmAt: alarm\?\.scheduledTime/);
+  assert.match(popup, /id="trigger"/);
+  assert.match(popup, /id="next"/);
 });
 
 test("extension scripts pass Node syntax checks", () => {
