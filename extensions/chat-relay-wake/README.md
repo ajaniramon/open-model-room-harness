@@ -76,6 +76,10 @@ period. If the same oldest relay item is still pending when that period ends, it
 wakes ChatGPT once more and advances to the next period. The default schedule is
 5, 15, 30, then 60 minutes; the final value is reused for later attempts.
 
+The wake cooldown applies only while retrying that same unresolved item. A newly
+arrived oldest item is eligible on the next poll instead of inheriting the previous
+item's cooldown.
+
 The breaker resets as soon as the queue empties or a different item becomes the
 oldest active item. A leased item remains active, so a worker crash cannot reset
 the breaker before its lease expires. The popup shows the unresolved wake count and retry time.

@@ -58,6 +58,12 @@ test("configured task heartbeat supplements throttled Chrome alarms", async () =
   assert.match(background, /checkInFlight/);
 });
 
+test("wake cooldown does not delay a newly arrived relay item", async () => {
+  const background = await read("background.js");
+  assert.match(background, /if \(!force && circuit && cooldownRemaining > 0\)/);
+  assert.match(background, /same unresolved item is cooling down/);
+});
+
 test("extension scripts pass Node syntax checks", () => {
   for (const script of ["backoff.js", "background.js", "content.js", "options.js", "popup.js"]) {
     execFileSync(process.execPath, ["--check", join(root, script)], { stdio: "pipe" });

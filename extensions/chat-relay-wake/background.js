@@ -249,10 +249,10 @@ async function checkRelay({ force = false, source = "manual" } = {}) {
     }
 
     const cooldownRemaining = settings.cooldownSeconds * 1000 - (Date.now() - Number(stored.lastWakeAt || 0));
-    if (!force && cooldownRemaining > 0) {
+    if (!force && circuit && cooldownRemaining > 0) {
       updateRuntimeStatus({
         state: "cooldown",
-        message: `Pending work found; cooldown has ${Math.ceil(cooldownRemaining / 1000)}s remaining`,
+        message: `The same unresolved item is cooling down for ${Math.ceil(cooldownRemaining / 1000)}s`,
       });
       return runtimeStatus;
     }
