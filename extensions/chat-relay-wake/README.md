@@ -105,3 +105,6 @@ unattended deployment, `CHAT_RELAY_TTL_SECONDS=86400` is a practical starting po
 - No automatic tab activation.
 
 This prototype uses DOM interaction only for the missing wake step. Once awake, the normal ChatGPT connector and harness relay tools take over.
+
+Every injected wake prompt includes a worker contract that makes the claimed Discord
+item authoritative and tells ChatGPT to ignore unrelated history in the persistent task.

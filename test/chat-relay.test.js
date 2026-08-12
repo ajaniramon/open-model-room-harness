@@ -108,6 +108,36 @@ test("queues bounded image metadata without exposing its Discord URL", () => {
   assert.equal(queue.getImageAttachment(id, 2), null);
 });
 
+test("binds a worker to one relay item and preserves bounded Discord reply context", () => {
+  const queue = new ChatRelayQueue({ enabled: true });
+  const id = queue.enqueue({
+    message: message(),
+    context: [{ role: "user", content: "current Discord context" }],
+    replyTo: {
+      messageId: "referenced-message",
+      channelId: "c1",
+      guildId: "g1",
+      resolved: true,
+      author: {
+        id: "bot-1",
+        username: "assistant",
+        displayName: "Room Assistant",
+        bot: true,
+      },
+      content: "the referenced Discord reply".repeat(100),
+      ignored: "not public",
+    },
+  });
+
+  const item = queue.get(id);
+  assert.equal(item.replyTo.content.length, 2_000);
+  assert.equal(item.replyTo.ignored, undefined);
+  assert.equal(item.workerContract.relayItemId, id);
+  assert.equal(item.workerContract.triggerMessageId, "m1");
+  assert.match(item.workerContract.instruction, /Ignore unrelated earlier ChatGPT turns/);
+  assert.match(item.workerContract.instruction, /same relayItemId/);
+});
+
 test("fetches only bounded images from approved Discord hosts", async () => {
   const fetched = [];
   const image = await fetchRelayImageAttachment({

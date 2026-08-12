@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check backoff.js && node --check background.js && node --check content.js && node --check options.js && node --check popup.js",
+    "check": "node --check backoff.js && node --check wake-prompt.js && node --check background.js && node --check content.js && node --check options.js && node --check popup.js",
     "test": "node --test"
   }
 }

@@ -466,6 +466,10 @@ For each claimed item:
 5. If processing takes longer than the lease, renew it before completing.
 
 Never use arbitrary Discord send tools for relay replies.
+Treat each claimed item's triggerText, replyTo, imageAttachments, and Discord context as
+the authoritative conversation. Ignore unrelated earlier turns in this ChatGPT
+conversation, including unanswered questions and prior topics. Process each relay item
+independently and complete or dismiss that exact item ID with its lease token.
 Do not invent missing context or retry a completed item.
 Only report a problem in ChatGPT when the relay tools fail repeatedly or require intervention.
 ```

@@ -4,6 +4,7 @@ import {
   DEFAULT_BACKOFF_SCHEDULE,
   normalizeBackoffSchedule,
 } from "./backoff.js";
+import { buildRelayWakePrompt } from "./wake-prompt.js";
 
 const ALARM_NAME = "chat-relay-wake-poll";
 let checkInFlight = null;
@@ -173,7 +174,7 @@ async function wakeTarget(settings, reason) {
     return await chrome.tabs.sendMessage(tab.id, {
       type: "chat-relay:wake",
       payload: {
-        prompt: settings.wakePrompt,
+        prompt: buildRelayWakePrompt(settings.wakePrompt),
         autoSubmit: settings.autoSubmit,
         reason,
       },

@@ -21,6 +21,27 @@ function compactContext(messages, maxChars) {
   return shaped;
 }
 
+function compactReplyTo(replyTo) {
+  const messageId = String(replyTo?.messageId || "");
+  if (!messageId) return null;
+  const author = replyTo?.author;
+  return {
+    messageId,
+    channelId: String(replyTo.channelId || "") || null,
+    guildId: String(replyTo.guildId || "") || null,
+    resolved: replyTo.resolved === true,
+    author: author
+      ? {
+          id: String(author.id || ""),
+          username: String(author.username || "").slice(0, 100),
+          displayName: String(author.displayName || "").slice(0, 100),
+          bot: author.bot === true,
+        }
+      : null,
+    content: replyTo.content == null ? null : String(replyTo.content).slice(0, 2_000),
+  };
+}
+
 async function atomicWrite(path, value) {
   await mkdir(dirname(path), { recursive: true });
   const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
@@ -128,6 +149,7 @@ export class ChatRelayQueue {
   enqueue({
     message,
     context,
+    replyTo = null,
     kind = "direct",
     directResponse = true,
     spontaneous = false,
@@ -172,6 +194,7 @@ export class ChatRelayQueue {
           "",
       },
       triggerText: String(message.content || "").slice(0, 2_000),
+      replyTo: compactReplyTo(replyTo),
       imageAttachments: collectRelayImageAttachments(message, this.maxImageAttachments),
       context: compactContext(context || [], this.maxContextChars),
       onReply,
@@ -376,6 +399,13 @@ export class ChatRelayQueue {
       isDM: item.isDM,
       author: item.author,
       triggerText: item.triggerText,
+      replyTo: item.replyTo || null,
+      workerContract: {
+        relayItemId: item.id,
+        triggerMessageId: item.messageId,
+        instruction:
+          "Answer only this claimed Discord relay item using its triggerText, replyTo, imageAttachments, and context. Ignore unrelated earlier ChatGPT turns. Complete or dismiss this same relayItemId with its leaseToken.",
+      },
       imageAttachments: (item.imageAttachments || []).map(publicRelayImageAttachment),
       ...(includeContext ? { context: item.context } : {}),
     };

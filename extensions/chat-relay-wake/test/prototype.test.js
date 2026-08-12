@@ -10,6 +10,7 @@ import {
   createWakeCircuitState,
   normalizeBackoffSchedule,
 } from "../backoff.js";
+import { buildRelayWakePrompt } from "../wake-prompt.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
@@ -62,6 +63,14 @@ test("wake cooldown does not delay a newly arrived relay item", async () => {
   const background = await read("background.js");
   assert.match(background, /if \(!force && circuit && cooldownRemaining > 0\)/);
   assert.match(background, /same unresolved item is cooling down/);
+});
+
+test("every wake prompt rejects unrelated persistent-chat history", () => {
+  const prompt = buildRelayWakePrompt("Check now.");
+  assert.match(prompt, /^Check now\./);
+  assert.match(prompt, /triggerText, replyTo, imageAttachments/);
+  assert.match(prompt, /Ignore unrelated earlier turns in this ChatGPT conversation/);
+  assert.match(prompt, /exact claimed relay item/);
 });
 
 test("extension scripts pass Node syntax checks", () => {
