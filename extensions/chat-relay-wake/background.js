@@ -6,6 +6,7 @@ import {
 } from "./backoff.js";
 
 const ALARM_NAME = "chat-relay-wake-poll";
+let checkInFlight = null;
 
 const DEFAULTS = {
   enabled: false,
@@ -292,6 +293,32 @@ async function checkRelay({ force = false, source = "manual" } = {}) {
   return runtimeStatus;
 }
 
+function runRelayCheck(options) {
+  if (checkInFlight) return checkInFlight;
+  checkInFlight = checkRelay(options).finally(() => {
+    checkInFlight = null;
+  });
+  return checkInFlight;
+}
+
+async function handleTargetHeartbeat(sender) {
+  const settings = await getSettings();
+  if (!settings.enabled) return runtimeStatus;
+  if (normalizedTaskUrl(sender?.tab?.url || "") !== normalizedTaskUrl(settings.targetUrl)) {
+    return runtimeStatus;
+  }
+
+  const now = Date.now();
+  const stored = await chrome.storage.local.get({ lastHeartbeatCheckAt: 0 });
+  const intervalMs = settings.pollMinutes * 60_000;
+  if (now - Number(stored.lastHeartbeatCheckAt || 0) < intervalMs) return runtimeStatus;
+
+  // Reserve this interval before the asynchronous fetch so duplicate task tabs
+  // cannot start the same poll concurrently.
+  await chrome.storage.local.set({ lastHeartbeatCheckAt: now });
+  return runRelayCheck({ source: "heartbeat" });
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   configureAlarm().catch(reportAlarmConfigurationError);
 });
@@ -302,7 +329,7 @@ chrome.runtime.onStartup.addListener(() => {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM_NAME) {
-    checkRelay({ source: "alarm" }).catch((error) =>
+    runRelayCheck({ source: "alarm" }).catch((error) =>
       updateRuntimeStatus({
         state: "error",
         message: error instanceof Error ? error.message : String(error),
@@ -318,9 +345,15 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   }
 });
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "chat-relay:check-now") {
-    checkRelay({ force: Boolean(message.force), source: message.force ? "force" : "manual" }).then(sendResponse);
+    runRelayCheck({ force: Boolean(message.force), source: message.force ? "force" : "manual" }).then(sendResponse);
+    return true;
+  }
+  if (message?.type === "chat-relay:heartbeat") {
+    handleTargetHeartbeat(sender).then(sendResponse).catch((error) =>
+      sendResponse({ state: "error", message: error instanceof Error ? error.message : String(error) }),
+    );
     return true;
   }
   if (message?.type === "chat-relay:get-status") {

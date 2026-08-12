@@ -45,6 +45,19 @@ test("popup exposes automatic alarm diagnostics", async () => {
   assert.match(popup, /id="next"/);
 });
 
+test("configured task heartbeat supplements throttled Chrome alarms", async () => {
+  const [background, content] = await Promise.all([
+    read("background.js"),
+    read("content.js"),
+  ]);
+  assert.match(content, /chat-relay:heartbeat/);
+  assert.match(content, /HEARTBEAT_INTERVAL_MS = 15_000/);
+  assert.match(background, /normalizedTaskUrl\(sender\?\.tab\?\.url/);
+  assert.match(background, /lastHeartbeatCheckAt/);
+  assert.match(background, /source: "heartbeat"/);
+  assert.match(background, /checkInFlight/);
+});
+
 test("extension scripts pass Node syntax checks", () => {
   for (const script of ["backoff.js", "background.js", "content.js", "options.js", "popup.js"]) {
     execFileSync(process.execPath, ["--check", join(root, script)], { stdio: "pipe" });

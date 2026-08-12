@@ -81,6 +81,12 @@ oldest active item. A leased item remains active, so a worker crash cannot reset
 the breaker before its lease expires. The popup shows the unresolved wake count and retry time.
 `Save and force check` in settings is the explicit manual override.
 
+The configured ChatGPT task tab also sends a lightweight heartbeat every 15 seconds.
+When the selected poll interval is due, that heartbeat wakes the service worker to
+check the harness. Chrome alarms remain as a fallback because Manifest V3 may defer
+them for several minutes. The popup's `Last trigger` field identifies whether the
+latest check came from `heartbeat`, `alarm`, `manual`, or `force`.
+
 This is outcome-based and deliberately does not scrape ChatGPT output for usage-limit
 messages. Polling the small status endpoint continues while prompt submission is
 paused. Configure relay retention to outlast the longest expected pause; for an
