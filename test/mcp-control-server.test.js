@@ -990,6 +990,36 @@ test("MCP control server returns relay attachments as image content", async () =
   }
 });
 
+test("MCP relay attachment fetch honors the queue byte limit", async () => {
+  const bytes = Buffer.alloc(1_500, 1);
+  const chatRelay = {
+    maxAttachmentBytes: 1_024,
+    getImageAttachment: () => ({
+      source: "attachment",
+      filename: "large.png",
+      contentType: "image/png",
+      size: bytes.length,
+      url: "https://cdn.discordapp.com/attachments/channel/message/large.png",
+    }),
+  };
+  const server = createTestServer({
+    chatRelay,
+    config: { chatRelay: { maxAttachmentBytes: 2_000 } },
+    fetchImplementation: async () => new Response(bytes, {
+      headers: { "content-type": "image/png", "content-length": String(bytes.length) },
+    }),
+  });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const { port } = server.address();
+    const result = (await callTool(port, "get_chat_relay_attachment", { id: "relay-1", index: 0 })).result;
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /1024-byte relay limit/);
+  } finally {
+    await server.close();
+  }
+});
+
 test("MCP control server refuses to start without a token", () => {
   assert.throws(
     () =>

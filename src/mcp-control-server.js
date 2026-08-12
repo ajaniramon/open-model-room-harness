@@ -1274,7 +1274,7 @@ function createMcpServer({
     try {
       const image = await fetchRelayImageAttachment(reference, {
         fetchImplementation,
-        maxBytes: config.chatRelay?.maxAttachmentBytes,
+        maxBytes: chatRelay?.maxAttachmentBytes ?? config.chatRelay?.maxAttachmentBytes,
       });
       return {
         content: [

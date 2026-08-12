@@ -57,7 +57,13 @@ test("queues a Discord turn and submits exactly one reply", async () => {
 });
 
 test("queues bounded image metadata without exposing its Discord URL", () => {
-  const queue = new ChatRelayQueue({ enabled: true, maxImageAttachments: 2 });
+  const queue = new ChatRelayQueue({
+    enabled: true,
+    maxImageAttachments: 2,
+    maxAttachmentBytes: 2048,
+  });
+  assert.equal(queue.maxImageAttachments, 2);
+  assert.equal(queue.maxAttachmentBytes, 2048);
   const id = queue.enqueue({
     message: message({
       attachments: new Map([

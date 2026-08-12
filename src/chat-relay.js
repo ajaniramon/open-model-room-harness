@@ -68,6 +68,7 @@ export class ChatRelayQueue {
     leaseSeconds = 120,
     maxAttempts = 3,
     maxImageAttachments = 4,
+    maxAttachmentBytes = 8_000_000,
     now = Date.now,
     logger = console,
     setTimer = setTimeout,
@@ -83,6 +84,7 @@ export class ChatRelayQueue {
     this.maxAttempts = Math.max(1, Math.min(Number(maxAttempts) || 3, 20));
     const requestedImageLimit = Number(maxImageAttachments);
     this.maxImageAttachments = Math.max(0, Math.min(Number.isFinite(requestedImageLimit) ? requestedImageLimit : 4, 10));
+    this.maxAttachmentBytes = Math.max(1_024, Math.min(Number(maxAttachmentBytes) || 8_000_000, 20_000_000));
     this.now = now;
     this.logger = logger;
     this.setTimer = setTimer;
