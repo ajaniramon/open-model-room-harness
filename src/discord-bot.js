@@ -998,6 +998,7 @@ export function createDiscordBot({
             !audioModeCommand &&
             !imageRequest &&
             !codexRequest &&
+            config.chatProvider !== "none" &&
             visionAnalyzer
           ) {
             try {
