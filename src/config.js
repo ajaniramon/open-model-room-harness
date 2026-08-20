@@ -440,6 +440,15 @@ export const config = Object.freeze({
     min: 200,
     max: 10_000,
   }),
+  webPrefetchEnabled: configuredBoolean("webPrefetch.enabled", "JJ_WEB_PREFETCH_ENABLED", true),
+  webPrefetchMaxUrls: configuredInteger("webPrefetch.maxUrls", "JJ_WEB_PREFETCH_MAX_URLS", 2, {
+    min: 1,
+    max: 5,
+  }),
+  webPrefetchMaxChars: configuredInteger("webPrefetch.maxChars", "JJ_WEB_PREFETCH_MAX_CHARS", 3_000, {
+    min: 500,
+    max: 20_000,
+  }),
   codexAllowedUserIds: new Set(
     (process.env.JJ_CODEX_ALLOWED_USER_IDS || "")
       .split(",")

@@ -84,3 +84,43 @@ test("ports Tavily Extract with clamped output and raw-content formatting", asyn
   });
   assert.equal(result, "Page body");
 });
+
+test("extracts only explicit page links and skips X, GIF, and media hosts", async () => {
+  const { extractWebPageUrls } = await import("../src/web-tools.js");
+  const text =
+    "mira (https://github.com/owner/repo/commit/abc123), " +
+    "https://x.com/jack/status/20 https://klipy.com/gifs/pokemon-ash-10 " +
+    "<https://docs.example.com/page?a=1> example.com/not-a-link " +
+    "https://github.com/owner/repo/commit/abc123 https://third.example/z";
+  assert.deepEqual(extractWebPageUrls(text, 5), [
+    "https://github.com/owner/repo/commit/abc123",
+    "https://docs.example.com/page?a=1",
+    "https://third.example/z",
+  ]);
+  assert.deepEqual(extractWebPageUrls(text, 1), [
+    "https://github.com/owner/repo/commit/abc123",
+  ]);
+  assert.deepEqual(extractWebPageUrls("no links here", 3), []);
+});
+
+test("page prefetcher attaches extracts and reports failed downloads inline", async () => {
+  const { WebPagePrefetcher } = await import("../src/web-tools.js");
+  const prefetcher = new WebPagePrefetcher({
+    client: {
+      async fetchUrl(url) {
+        if (url.includes("broken")) return "ERROR: Tavily returned 502: bad gateway";
+        return "Readable page text.";
+      },
+    },
+    maxUrls: 2,
+    maxChars: 3_000,
+  });
+  const block = await prefetcher.describe(
+    "https://ok.example/page and https://broken.example/page",
+  );
+  assert.match(block, /https:\/\/ok\.example\/page\nReadable page text\./);
+  assert.match(block, /https:\/\/broken\.example\/page\n\(not downloaded: Tavily returned 502/);
+
+  assert.equal(await prefetcher.describe("no links"), null);
+  assert.equal(await new WebPagePrefetcher({}).describe("https://ok.example/x"), null);
+});

@@ -150,6 +150,104 @@ export class TavilyClient {
   }
 }
 
+// Hosts the page prefetcher never downloads: X/Twitter posts belong to the X
+// prefetcher, and GIF/media hosts carry no readable text worth an extract call.
+const PREFETCH_SKIPPED_HOSTS = Object.freeze(
+  new Set([
+    "x.com",
+    "www.x.com",
+    "twitter.com",
+    "www.twitter.com",
+    "fxtwitter.com",
+    "www.fxtwitter.com",
+    "fixupx.com",
+    "www.fixupx.com",
+    "tenor.com",
+    "media.tenor.com",
+    "giphy.com",
+    "media.giphy.com",
+    "klipy.com",
+    "www.klipy.com",
+    "cdn.discordapp.com",
+    "media.discordapp.net",
+  ]),
+);
+
+// Only explicit http(s) links count: bare "example.com" mentions are prose, not a
+// request to download anything. Candidates are split and trimmed like X links so
+// <angle brackets> and glued punctuation do not break parsing.
+export function extractWebPageUrls(content, maxUrls = 2) {
+  const limit = Math.max(1, Math.min(Number(maxUrls) || 1, 5));
+  const urls = [];
+  const seen = new Set();
+  for (const token of String(content || "").split(/[\s<>"'`]+/)) {
+    if (!token) continue;
+    const candidate = token.replace(/^[([{]+/, "").replace(/[),.;:!?\]}]+$/, "");
+    if (!/^https?:\/\//i.test(candidate)) continue;
+    let url;
+    try {
+      url = new URL(candidate);
+    } catch {
+      continue;
+    }
+    if (url.protocol !== "https:" && url.protocol !== "http:") continue;
+    if (PREFETCH_SKIPPED_HOSTS.has(url.hostname.toLowerCase())) continue;
+    if (seen.has(url.href)) continue;
+    seen.add(url.href);
+    urls.push(url.href);
+    if (urls.length >= limit) break;
+  }
+  return urls;
+}
+
+// Downloads ordinary web pages that an authorized message links to, without
+// waiting for the model to decide to call a tool. Extraction goes through the
+// same Tavily route as web_fetch, so the harness never connects to the linked
+// host directly. Failures are reported inside the block so the model can say
+// the page was unavailable instead of inventing its contents.
+export class WebPagePrefetcher {
+  constructor({ client, maxUrls = 2, maxChars = 3_000 } = {}) {
+    this.client = client;
+    this.maxUrls = Math.max(1, Math.min(Number(maxUrls) || 1, 5));
+    this.maxChars = Math.max(500, Math.min(Number(maxChars) || 3_000, 20_000));
+  }
+
+  async describe(content) {
+    if (!this.client) return null;
+    const urls = extractWebPageUrls(content, this.maxUrls);
+    if (!urls.length) return null;
+    const perUrlChars = Math.max(500, Math.floor(this.maxChars / urls.length));
+    const pages = await Promise.all(
+      urls.map(async (url) => {
+        let result;
+        try {
+          result = await this.client.fetchUrl(url, perUrlChars);
+        } catch (error) {
+          result = `ERROR: ${error?.name || "Error"}: ${error?.message || error}`;
+        }
+        if (
+          typeof result !== "string" ||
+          result.startsWith("ERROR:") ||
+          !result.trim() ||
+          result === "(no content extracted)"
+        ) {
+          const detail = String(result || "")
+            .replace(/^ERROR:\s*/, "")
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 200);
+          return `${url}\n(not downloaded: ${detail || "unknown failure"})`;
+        }
+        return `${url}\n${result}`;
+      }),
+    );
+    const block = pages.join("\n\n");
+    return block.length > this.maxChars
+      ? `${block.slice(0, this.maxChars)}\n… (page text truncated)`
+      : block;
+  }
+}
+
 export class WebToolRuntime {
   constructor(tavilyClient, fxTwitterClient = null) {
     this.tavily = tavilyClient;

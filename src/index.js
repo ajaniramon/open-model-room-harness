@@ -16,7 +16,7 @@ import { ParticipationController } from "./participation-policy.js";
 import { JsonlRequestLogger } from "./request-logger.js";
 import { RuntimeControl } from "./runtime-control.js";
 import { VisionAnalyzer } from "./vision.js";
-import { TavilyClient, WebToolRuntime } from "./web-tools.js";
+import { TavilyClient, WebPagePrefetcher, WebToolRuntime } from "./web-tools.js";
 import { FxTwitterClient, KeylessXDiscovery, XPostPrefetcher } from "./x-tools.js";
 
 const promptUrl = new URL("./system-prompt.txt", import.meta.url);
@@ -56,12 +56,20 @@ const fxTwitter = new FxTwitterClient(
   undefined,
   xDiscovery.searchPostUrls.bind(xDiscovery),
 );
-const webTools = new WebToolRuntime(new TavilyClient(config.tavilyApiKey), fxTwitter);
+const tavily = new TavilyClient(config.tavilyApiKey);
+const webTools = new WebToolRuntime(tavily, fxTwitter);
 const xPostPrefetcher = config.xPrefetchEnabled
   ? new XPostPrefetcher({
       client: fxTwitter,
       maxPosts: config.xPrefetchMaxPosts,
       maxChars: config.xPrefetchMaxChars,
+    })
+  : null;
+const webPagePrefetcher = config.webPrefetchEnabled && config.tavilyApiKey
+  ? new WebPagePrefetcher({
+      client: tavily,
+      maxUrls: config.webPrefetchMaxUrls,
+      maxChars: config.webPrefetchMaxChars,
     })
   : null;
 const participationAuditLogger = new JsonlRequestLogger(config.participationAudit);
@@ -179,6 +187,7 @@ client = createDiscordBot({
   imageClient,
   visionAnalyzer,
   xPostPrefetcher,
+  webPagePrefetcher,
   participationController,
   memoryStore,
   memoryDigester,
