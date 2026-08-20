@@ -70,6 +70,11 @@ function createHarness({
       },
       maxUrls: config.webPrefetchMaxUrls,
       maxChars: config.webPrefetchMaxChars,
+      // GitHub-style plain-text endpoints never reach the network in tests.
+      fetchImplementation: async (url) => {
+        fetched.push(url);
+        return new Response(pageText, { status: 200 });
+      },
     }),
     systemPrompt: "system",
     logger: { info: () => undefined, error: () => undefined },
@@ -115,11 +120,12 @@ function userTurn(context) {
 
 test("downloads a bare link from a web-authorized identity and attaches the page", async () => {
   const harness = createHarness();
-  const url = "https://github.com/ajaniramon/open-model-room-harness/commit/33df0e6";
+  const url = "https://github.com/ajaniramon/open-model-room-harness/commit/33df0e6ce9801e04866653cb93791f191ef269cc";
   harness.emit(WEB_USER, `@bot ${url}`);
   await harness.settle();
 
-  assert.deepEqual(harness.fetched, [url]);
+  // A GitHub commit link is rewritten to its plain-text .patch endpoint.
+  assert.deepEqual(harness.fetched, [`${url}.patch`]);
   const context = harness.contexts.at(-1);
   assert.ok(context, "the model should have been called");
   assert.match(userTurn(context), /Application web page download/);

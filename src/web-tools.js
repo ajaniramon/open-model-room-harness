@@ -200,16 +200,81 @@ export function extractWebPageUrls(content, maxUrls = 2) {
   return urls;
 }
 
+// GitHub renders commits, pull requests, and files as chrome-heavy HTML whose
+// actual content sits far below navigation menus, so HTML extraction returns
+// "Explore by Topic" instead of code. GitHub's plain-text endpoints carry the
+// real change, so known GitHub page URLs are rewritten before download:
+// commits become .patch (commit message + diff), pull requests become .diff,
+// and blob file views become their raw.githubusercontent.com counterpart.
+export function normalizePrefetchUrl(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    const host = url.hostname.toLowerCase();
+    if (host === "github.com" || host === "www.github.com") {
+      const path = url.pathname;
+      if (/^\/[^/]+\/[^/]+\/commit\/[0-9a-f]{7,40}$/i.test(path)) {
+        return { url: `https://github.com${path}.patch`, plainText: true };
+      }
+      if (/^\/[^/]+\/[^/]+\/pull\/\d+$/.test(path)) {
+        return { url: `https://github.com${path}.diff`, plainText: true };
+      }
+      if (/\.(?:diff|patch)$/i.test(path)) {
+        return { url: url.href, plainText: true };
+      }
+      const blob = path.match(/^\/([^/]+)\/([^/]+)\/blob\/(.+)$/);
+      if (blob) {
+        return {
+          url: `https://raw.githubusercontent.com/${blob[1]}/${blob[2]}/${blob[3]}`,
+          plainText: true,
+        };
+      }
+    }
+    if (host === "raw.githubusercontent.com" || host === "gist.githubusercontent.com") {
+      return { url: url.href, plainText: true };
+    }
+    return { url: url.href, plainText: false };
+  } catch {
+    return { url: String(rawUrl || ""), plainText: false };
+  }
+}
+
 // Downloads ordinary web pages that an authorized message links to, without
-// waiting for the model to decide to call a tool. Extraction goes through the
-// same Tavily route as web_fetch, so the harness never connects to the linked
-// host directly. Failures are reported inside the block so the model can say
-// the page was unavailable instead of inventing its contents.
+// waiting for the model to decide to call a tool. HTML pages are extracted
+// through the same Tavily route as web_fetch, so the harness never connects to
+// arbitrary linked hosts directly; only GitHub's plain-text endpoints are
+// fetched directly, because they need no extraction. Failures are reported
+// inside the block so the model can say the page was unavailable instead of
+// inventing its contents.
 export class WebPagePrefetcher {
-  constructor({ client, maxUrls = 2, maxChars = 3_000 } = {}) {
+  constructor({ client, maxUrls = 2, maxChars = 3_000, fetchImplementation = fetch } = {}) {
     this.client = client;
     this.maxUrls = Math.max(1, Math.min(Number(maxUrls) || 1, 5));
     this.maxChars = Math.max(500, Math.min(Number(maxChars) || 3_000, 20_000));
+    this.fetch = fetchImplementation;
+  }
+
+  async fetchPlainText(url, maxChars) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20_000);
+    try {
+      const response = await this.fetch(url, {
+        headers: { Accept: "text/plain" },
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        return `ERROR: ${new URL(url).hostname} returned HTTP ${response.status}.`;
+      }
+      const text = await response.text();
+      if (!text.trim()) return "ERROR: the plain-text endpoint returned no content.";
+      if (text.length > maxChars) {
+        return `${text.slice(0, maxChars)}\n… (truncated, ${text.length - maxChars} more chars)`;
+      }
+      return text;
+    } catch (error) {
+      return `ERROR: ${error?.name || "Error"}: ${error?.message || error}`;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   async describe(content) {
@@ -219,9 +284,12 @@ export class WebPagePrefetcher {
     const perUrlChars = Math.max(500, Math.floor(this.maxChars / urls.length));
     const pages = await Promise.all(
       urls.map(async (url) => {
+        const target = normalizePrefetchUrl(url);
         let result;
         try {
-          result = await this.client.fetchUrl(url, perUrlChars);
+          result = target.plainText
+            ? await this.fetchPlainText(target.url, perUrlChars)
+            : await this.client.fetchUrl(target.url, perUrlChars);
         } catch (error) {
           result = `ERROR: ${error?.name || "Error"}: ${error?.message || error}`;
         }

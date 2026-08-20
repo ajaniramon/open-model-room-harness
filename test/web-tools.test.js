@@ -124,3 +124,73 @@ test("page prefetcher attaches extracts and reports failed downloads inline", as
   assert.equal(await prefetcher.describe("no links"), null);
   assert.equal(await new WebPagePrefetcher({}).describe("https://ok.example/x"), null);
 });
+
+test("rewrites GitHub page URLs to their plain-text endpoints", async () => {
+  const { normalizePrefetchUrl } = await import("../src/web-tools.js");
+  assert.deepEqual(
+    normalizePrefetchUrl("https://github.com/owner/repo/commit/33df0e6ce9801e04866653cb93791f191ef269cc"),
+    { url: "https://github.com/owner/repo/commit/33df0e6ce9801e04866653cb93791f191ef269cc.patch", plainText: true },
+  );
+  assert.deepEqual(normalizePrefetchUrl("https://github.com/owner/repo/pull/42"), {
+    url: "https://github.com/owner/repo/pull/42.diff",
+    plainText: true,
+  });
+  assert.deepEqual(normalizePrefetchUrl("https://github.com/owner/repo/blob/main/src/app.js"), {
+    url: "https://raw.githubusercontent.com/owner/repo/main/src/app.js",
+    plainText: true,
+  });
+  // Ordinary pages, including GitHub's own non-diff pages, still go through extraction.
+  assert.deepEqual(normalizePrefetchUrl("https://github.com/owner/repo/issues/7"), {
+    url: "https://github.com/owner/repo/issues/7",
+    plainText: false,
+  });
+  assert.deepEqual(normalizePrefetchUrl("https://example.com/article"), {
+    url: "https://example.com/article",
+    plainText: false,
+  });
+});
+
+test("fetches GitHub diffs directly as plain text instead of extracting chrome", async () => {
+  const { WebPagePrefetcher } = await import("../src/web-tools.js");
+  const directFetches = [];
+  const tavilyFetches = [];
+  const prefetcher = new WebPagePrefetcher({
+    client: {
+      async fetchUrl(url) {
+        tavilyFetches.push(url);
+        return "Extracted article text.";
+      },
+    },
+    maxUrls: 2,
+    maxChars: 4_000,
+    fetchImplementation: async (url) => {
+      directFetches.push(url);
+      return new Response("From abc123 Mon Sep 17\nSubject: [PATCH] Fix the bug\n+added line", {
+        status: 200,
+      });
+    },
+  });
+  const block = await prefetcher.describe(
+    "https://github.com/owner/repo/commit/33df0e6ce98 and https://example.com/post",
+  );
+  assert.deepEqual(directFetches, [
+    "https://github.com/owner/repo/commit/33df0e6ce98.patch",
+  ]);
+  assert.deepEqual(tavilyFetches, ["https://example.com/post"]);
+  // The block is labelled with the URL the user actually sent.
+  assert.match(block, /https:\/\/github\.com\/owner\/repo\/commit\/33df0e6ce98\nFrom abc123/);
+  assert.match(block, /Subject: \[PATCH\] Fix the bug/);
+  assert.match(block, /https:\/\/example\.com\/post\nExtracted article text\./);
+});
+
+test("reports a failed plain-text endpoint inline like any other download", async () => {
+  const { WebPagePrefetcher } = await import("../src/web-tools.js");
+  const prefetcher = new WebPagePrefetcher({
+    client: { async fetchUrl() { return "unused"; } },
+    maxUrls: 1,
+    maxChars: 2_000,
+    fetchImplementation: async () => new Response("gone", { status: 404 }),
+  });
+  const block = await prefetcher.describe("https://github.com/owner/repo/pull/9");
+  assert.match(block, /https:\/\/github\.com\/owner\/repo\/pull\/9\n\(not downloaded: github\.com returned HTTP 404/);
+});
