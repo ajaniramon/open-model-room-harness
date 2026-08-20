@@ -105,6 +105,16 @@ const memoryStore = config.memoryEnabled
       auditLogger: memoryAuditLogger,
     }).load()
   : null;
+// Retention is only meaningful if it is actually swept: a supervised host can stay
+// up for months, so a periodic sweep deletes expired notes rather than leaving
+// months of personal data on disk that the retention policy says was removed.
+const memoryRetentionTimer = memoryStore
+  ? setInterval(
+      () => void memoryStore.sweep().catch((error) => console.error("Retention sweep failed", error)),
+      config.memoryRetentionSweepHours * 60 * 60_000,
+    )
+  : null;
+memoryRetentionTimer?.unref?.();
 const modelClient = new ModelClient(config, fetch, webTools);
 const chatRelay = await new ChatRelayQueue(config.chatRelay).load();
 const memoryDigester =
@@ -144,6 +154,7 @@ const shutdown = async (signal, exitCode = 0) => {
   await chatRelay?.flush();
   await participationController.close();
   await memoryDigester?.close();
+  if (memoryRetentionTimer) clearInterval(memoryRetentionTimer);
   await memoryStore?.close();
   await mcpControlServer?.close();
   await behaviorModeController?.close();

@@ -650,6 +650,14 @@ export const config = Object.freeze({
     min: 1,
     max: 3_650,
   }),
+  // How often the retention window is actually swept on a long-running host, so
+  // expired notes are deleted from disk instead of only being hidden at read time.
+  memoryRetentionSweepHours: configuredInteger(
+    "memory.retentionSweepHours",
+    "JJ_MEMORY_RETENTION_SWEEP_HOURS",
+    6,
+    { min: 1, max: 168 },
+  ),
   memoryMaxTextChars: configuredInteger("memory.maxTextChars", "JJ_MEMORY_MAX_TEXT_CHARS", 300, {
     min: 40,
     max: 2_000,
@@ -657,14 +665,34 @@ export const config = Object.freeze({
   memoryInjectionMaxItems: configuredInteger(
     "memory.injection.maxItems",
     "JJ_MEMORY_INJECTION_MAX_ITEMS",
-    60,
+    40,
     { min: 1, max: 2_000 },
   ),
   memoryInjectionMaxChars: configuredInteger(
     "memory.injection.maxChars",
     "JJ_MEMORY_INJECTION_MAX_CHARS",
-    12_000,
-    { min: 100, max: 400_000 },
+    6_000,
+    // The upper bound is deliberately conservative: the stable core is injected on
+    // every request, so a fat-fingered value here is billed on every turn.
+    { min: 100, max: 60_000 },
+  ),
+  memoryInjectionPerSubjectMaxItems: configuredInteger(
+    "memory.injection.perSubjectMaxItems",
+    "JJ_MEMORY_INJECTION_PER_SUBJECT_MAX_ITEMS",
+    6,
+    { min: 1, max: 200 },
+  ),
+  memoryFocusMaxItems: configuredInteger(
+    "memory.injection.focus.maxItems",
+    "JJ_MEMORY_FOCUS_MAX_ITEMS",
+    6,
+    { min: 0, max: 50 },
+  ),
+  memoryFocusMaxChars: configuredInteger(
+    "memory.injection.focus.maxChars",
+    "JJ_MEMORY_FOCUS_MAX_CHARS",
+    1_500,
+    { min: 0, max: 20_000 },
   ),
   // Passive capture is a second, separate switch: enabling memory alone only gives
   // the explicit "remember this" commands.

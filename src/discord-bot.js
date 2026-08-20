@@ -545,25 +545,30 @@ export async function buildContext(
     timeZone: config.timeZone,
     now: Date.now(),
   };
-  // Built here because this is where the recent messages are known: memories about the
-  // people currently in the channel go to the front of the queue.
+  // The stable core rides at the cacheable prefix position; the relevance-ranked
+  // focus tail (keyed to this message) rides after the conversation, past the cache
+  // breakpoint, so its churn never invalidates the cached core.
   const memory = memoryContext?.store
     ? buildMemoryBlock(memoryContext.store, {
         guildId: message.guildId || null,
         channelId: message.channelId,
         speakerUserId: message.author.id,
-        presentUserIds: new Set([...recent.values()].map((item) => String(item.author.id))),
+        queryText: cleanContent(message, client.user),
         ownerTurn: memoryContext.ownerTurn === true,
         maxItems: config.memoryInjectionMaxItems,
         maxChars: config.memoryInjectionMaxChars,
+        perSubjectMaxItems: config.memoryInjectionPerSubjectMaxItems,
+        focusMaxItems: config.memoryFocusMaxItems,
+        focusMaxChars: config.memoryFocusMaxChars,
       })
-    : { block: null, dropped: 0, records: [] };
+    : { core: null, focus: null, dropped: 0, records: [] };
   if (memory.dropped) {
     memoryContext.logger?.info?.(
       `Memory block full: ${memory.records.length} included, ${memory.dropped} evicted`,
     );
   }
-  const memoryBlock = memory.block;
+  const memoryBlock = memory.core;
+  const memoryFocus = memory.focus;
   const messages = [...recent.values()]
     .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
     .filter((item) => !isBlockedAuthor(item.author, config))
@@ -657,6 +662,7 @@ export async function buildContext(
     },
     ...(memoryBlock ? [{ role: "user", content: memoryBlock }] : []),
     ...messages,
+    ...(memoryFocus ? [{ role: "user", content: memoryFocus }] : []),
   ];
 }
 
@@ -983,7 +989,10 @@ export function createDiscordBot({
             config.ownerUsernames.has(String(message.author.username).toLowerCase()),
         });
         // While observing, a public "[remembered] ..." would announce the whole game.
-        const discreet = runtimeControl?.observationEnabled === true;
+        // A command that returns the caller's own private notes (list/export) is
+        // also delivered discreetly, so owner-private or cross-guild notes never
+        // print into the channel it was typed in.
+        const discreet = runtimeControl?.observationEnabled === true || result.discreet === true;
         if (result.attachment) {
           const payload = {
             content: result.response,

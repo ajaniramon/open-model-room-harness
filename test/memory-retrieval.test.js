@@ -5,6 +5,7 @@ import {
   formatMemoryBlock,
   isReadable,
   orderMemories,
+  selectFocus,
   selectWithinBudget,
 } from "../src/memory-retrieval.js";
 
@@ -64,30 +65,41 @@ test("the owner's DM reads guild memories, nobody else crosses a scope", () => {
   assert.match(block, /Windows service/);
 });
 
-test("orders by speaker, then people in the room, then recency and significance", () => {
-  const speaker = record({ subject: { userId: "1", displayName: "Owner" }, significance: 1 });
-  const present = record({ subject: { userId: "2", displayName: "Luca" }, significance: 5 });
-  const absent = record({ subject: { userId: "3", displayName: "Ghost" }, significance: 5 });
-  const olderPresent = record({
-    subject: { userId: "2", displayName: "Luca" },
+test("the core orders by recency, then significance — never by who is speaking", () => {
+  const newest = record({ text: "newest note", createdAt: new Date(NOW - DAY_MS).toISOString() });
+  const middleHigh = record({
+    text: "older but important",
     significance: 5,
-    createdAt: new Date(NOW - 40 * DAY_MS).toISOString(),
+    createdAt: new Date(NOW - 5 * DAY_MS).toISOString(),
   });
+  const middleLow = record({
+    text: "older and minor",
+    significance: 1,
+    createdAt: new Date(NOW - 5 * DAY_MS).toISOString(),
+  });
+  const oldest = record({ text: "oldest note", createdAt: new Date(NOW - 40 * DAY_MS).toISOString() });
 
-  const ordered = orderMemories([absent, olderPresent, present, speaker], {
-    speakerUserId: "1",
-    presentUserIds: new Set(["1", "2"]),
-  });
+  const ordered = orderMemories([middleLow, oldest, newest, middleHigh]);
   assert.deepEqual(
-    ordered.map((item) => item.subject.displayName),
-    ["Owner", "Luca", "Luca", "Ghost"],
+    ordered.map((item) => item.text),
+    ["newest note", "older but important", "older and minor", "oldest note"],
+    "recency first; significance only breaks a same-day tie",
   );
-  assert.equal(ordered[1].id, present.id, "the newer of the two Luca facts comes first");
+});
+
+test("the core is identical regardless of who is speaking — the cache invariant", () => {
+  const records = [
+    record({ subject: { userId: "1", displayName: "Owner" } }),
+    record({ subject: { userId: "2", displayName: "Luca" } }),
+  ];
+  const store = { isOptedOut: () => false, active: () => records };
+  const base = { guildId: "g1", channelId: "c1", queryText: "" };
+  const forOne = buildMemoryBlock(store, { ...base, speakerUserId: "1" }).core;
+  const forTwo = buildMemoryBlock(store, { ...base, speakerUserId: "2" }).core;
+  assert.equal(forOne, forTwo, "the cacheable core must not depend on the speaker");
 });
 
 test("a fresh low-significance note outranks a stale high-significance one", () => {
-  // The "G's PC" regression: a two-week-old "waiting for a fan" note kept beating
-  // the recent "already fixed" note because significance ordered before recency.
   const stale = record({
     text: "G's PC is broken and he is waiting for a replacement fan",
     significance: 5,
@@ -98,31 +110,40 @@ test("a fresh low-significance note outranks a stale high-significance one", () 
     significance: 2,
     createdAt: new Date(NOW - DAY_MS).toISOString(),
   });
-  const ordered = orderMemories([stale, fresh], {
-    speakerUserId: "1",
-    presentUserIds: new Set(["1"]),
-  });
+  const ordered = orderMemories([stale, fresh]);
   assert.equal(ordered[0].text, "G has already fixed his PC", "recency wins over significance");
 
   const block = formatMemoryBlock(ordered);
   assert.match(block, /newer one supersedes the older/i);
-  assert.ok(
-    block.indexOf("already fixed") < block.indexOf("waiting for a replacement fan"),
-    "the block lists the fresh note before the stale one",
-  );
+  assert.ok(block.indexOf("already fixed") < block.indexOf("waiting for a replacement fan"));
 });
 
-test("ordering ignores the current message entirely", () => {
-  const records = [
-    record({ text: "likes strawberry ice cream", significance: 4 }),
-    record({ text: "runs the windows service", significance: 2 }),
-  ];
-  const options = { speakerUserId: "1", presentUserIds: new Set(["1"]) };
-  assert.deepEqual(
-    orderMemories(records, options).map((item) => item.text),
-    orderMemories(records, options).map((item) => item.text),
-  );
-  assert.equal(orderMemories(records, options)[0].text, "likes strawberry ice cream");
+test("the focus tail surfaces query-relevant and speaker notes not already in the core", () => {
+  const speakerNote = record({
+    text: "prefers dark roast coffee",
+    subject: { userId: "9", displayName: "Speaker" },
+    createdAt: new Date(NOW - 30 * DAY_MS).toISOString(),
+  });
+  const relevant = record({
+    text: "the deployment pipeline runs on Kubernetes",
+    keys: ["kubernetes", "deployment"],
+    subject: { userId: "8", displayName: "Other" },
+    createdAt: new Date(NOW - 30 * DAY_MS).toISOString(),
+  });
+  const irrelevant = record({
+    text: "likes hiking on weekends",
+    subject: { userId: "7", displayName: "Nobody" },
+    createdAt: new Date(NOW - 30 * DAY_MS).toISOString(),
+  });
+
+  const focus = selectFocus([speakerNote, relevant, irrelevant], {
+    queryText: "how does the kubernetes deployment work",
+    speakerUserId: "9",
+  });
+  const texts = focus.map((r) => r.text);
+  assert.ok(texts.includes("prefers dark roast coffee"), "the speaker's own note is always included");
+  assert.ok(texts.includes("the deployment pipeline runs on Kubernetes"), "a query-relevant note is included");
+  assert.ok(!texts.includes("likes hiking on weekends"), "an irrelevant non-speaker note is excluded");
 });
 
 test("everything that fits goes in, the rest is evicted from the prompt only", () => {
@@ -141,6 +162,23 @@ test("everything that fits goes in, the rest is evicted from the prompt only", (
   const capped = selectWithinBudget(records, { maxItems: 4, maxChars: 40_000 });
   assert.equal(capped.selected.length, 4);
   assert.equal(capped.dropped, 6);
+});
+
+test("the per-subject cap stops one participant from consuming the whole block", () => {
+  const mine = Array.from({ length: 8 }, (_, i) =>
+    record({ text: `chatty ${i}`, subject: { userId: "1", displayName: "Chatty" } }),
+  );
+  const others = Array.from({ length: 3 }, (_, i) =>
+    record({ text: `other ${i}`, subject: { userId: `${i + 2}`, displayName: `U${i}` } }),
+  );
+  const { selected } = selectWithinBudget([...mine, ...others], {
+    maxItems: 200,
+    maxChars: 40_000,
+    perSubjectMaxItems: 3,
+  });
+  const fromChatty = selected.filter((r) => r.subject.userId === "1");
+  assert.equal(fromChatty.length, 3, "at most 3 notes from one subject");
+  assert.equal(selected.length, 6, "the other subjects still get their notes");
 });
 
 test("the block is labelled untrusted and states abstention when empty", () => {
@@ -163,14 +201,16 @@ test("the same store produces the same block regardless of what was said", () =>
   assert.equal(first.records.length, 2);
 });
 
-test("reports how many memories were evicted so a full block is visible", () => {
+test("reports how many memories the core evicted so a full block is visible", () => {
   const records = Array.from({ length: 5 }, (_, index) => record({ text: `fact ${index}` }));
   const store = { isOptedOut: () => false, active: () => records };
+  // focusMaxItems: 0 isolates the core budget from the focus tail for this check.
   const { records: included, dropped } = buildMemoryBlock(store, {
     guildId: "g1",
     channelId: "c1",
-    speakerUserId: "1",
+    speakerUserId: "99",
     maxItems: 2,
+    focusMaxItems: 0,
   });
   assert.equal(included.length, 2);
   assert.equal(dropped, 3);

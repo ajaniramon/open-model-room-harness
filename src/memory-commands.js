@@ -115,6 +115,9 @@ export async function executeMemoryCommand(command, store, context) {
     const shown = mine.slice(0, 10).map(describe);
     const extra = mine.length > shown.length ? `\n…and ${mine.length - shown.length} more.` : "";
     return {
+      // Delivered privately: these are the caller's own notes, including
+      // owner-private and cross-guild ones that must not print in the channel.
+      discreet: true,
       response: `**Stored memory about you (${mine.length})**\n${shown.join("\n")}${extra}\nForget one with \`forget <id>\`, or all with \`forget everything about me\`.`,
     };
   }
@@ -153,6 +156,9 @@ export async function executeMemoryCommand(command, store, context) {
   if (command.action === "export") {
     const content = store.exportSubject(userId);
     return {
+      // The export is the full JSON of every field of every note about the caller;
+      // it goes to their DM, never as a public channel attachment.
+      discreet: true,
       response: "Here is everything I have stored about you.",
       attachment: { name: `memory-${String(userId)}.json`, content },
     };

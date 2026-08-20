@@ -71,9 +71,16 @@ export class MemoryStore {
       if (!line.trim()) continue;
       this.appendedLines += 1;
       try {
-        this.#apply(JSON.parse(line));
+        if (!this.#apply(JSON.parse(line))) skipped += 1;
       } catch {
         skipped += 1;
+      }
+    }
+    // A supersededBy pointing at a record that never loaded would hide the pointer's
+    // owner forever; clear those danglers so the file stays safely hand-editable.
+    for (const record of this.records.values()) {
+      if (record.supersededBy && !this.records.has(record.supersededBy)) {
+        record.supersededBy = null;
       }
     }
     if (skipped) this.logger.warn?.(`Skipped ${skipped} malformed memory entries.`);
@@ -81,22 +88,40 @@ export class MemoryStore {
     return this;
   }
 
+  #isWellFormed(record) {
+    return (
+      record &&
+      typeof record.id === "string" &&
+      typeof record.text === "string" &&
+      typeof record.createdAt === "string" &&
+      Array.isArray(record.keys) &&
+      record.subject &&
+      typeof record.subject.userId === "string" &&
+      record.scope &&
+      PRIVACY_LEVELS.includes(record.privacy)
+    );
+  }
+
+  // Returns false for a rejected/malformed entry so load() can count it as skipped.
   #apply(entry) {
-    if (entry?.op === "put" && entry.record?.id) {
+    if (entry?.op === "put") {
+      if (!this.#isWellFormed(entry.record)) return false;
       const record = entry.record;
       this.records.set(record.id, record);
       const supersedes = this.records.get(record.supersedes);
       if (supersedes) supersedes.supersededBy = record.id;
-      return;
+      return true;
     }
     if (entry?.op === "delete" && entry.id) {
       this.records.delete(entry.id);
-      return;
+      return true;
     }
     if (entry?.op === "consent" && entry.userId) {
       if (entry.enabled === false) this.optedOut.add(String(entry.userId));
       else this.optedOut.delete(String(entry.userId));
+      return true;
     }
+    return false;
   }
 
   isOptedOut(userId) {
@@ -157,7 +182,12 @@ export class MemoryStore {
       kind: "fact",
       text: clean,
       keys: normalizeKeys(keys.length ? keys : clean.split(/[\s,.;:]+/).filter((word) => word.length > 4)),
-      subject: { userId: String(subject.userId), displayName: String(subject.displayName || "") },
+      // The display name is an attacker-controlled guild nickname rendered into the
+      // block, so it goes through the same neutralization as the note text.
+      subject: {
+        userId: String(subject.userId),
+        displayName: sanitizeMemoryText(subject.displayName || "", 64),
+      },
       scope: {
         guildId: scope.guildId ? String(scope.guildId) : null,
         channelId: level === "room" && scope.channelId ? String(scope.channelId) : null,
@@ -194,8 +224,17 @@ export class MemoryStore {
   async forget(ids) {
     const list = (Array.isArray(ids) ? ids : [ids]).filter((id) => this.records.has(id));
     for (const id of list) {
+      // Deleting a correction must not bury the fact it superseded: resurrect the
+      // predecessor so a wrong correction can be undone with `forget <id>` instead
+      // of leaving the original invisible forever.
+      const doomed = this.records.get(id);
+      const parent = doomed?.supersedes ? this.records.get(doomed.supersedes) : null;
       this.records.delete(id);
       await this.#write({ op: "delete", at: this.#stamp(), id });
+      if (parent && parent.supersededBy === id) {
+        parent.supersededBy = null;
+        await this.#write({ op: "put", at: this.#stamp(), record: parent });
+      }
     }
     if (list.length) await this.#audit("memory_deleted", { ids: list, count: list.length });
     return list.length;
@@ -249,21 +288,42 @@ export class MemoryStore {
     await this.auditLogger?.close();
   }
 
+  // Eviction is permanent deletion, so it must not drop a live correction and keep
+  // a stale alarm: dead records (superseded/expired) go first, then live records are
+  // trimmed recency-first — the same order retrieval uses, so what survives on disk
+  // matches what would have been recalled.
+  #evictionRank(records) {
+    const expiry = this.retentionDays ? this.now() - this.retentionDays * DAY_MS : null;
+    const isDead = (record) =>
+      Boolean(record.supersededBy) || (expiry !== null && Date.parse(record.createdAt) < expiry);
+    return [...records].sort(
+      (a, b) =>
+        Number(isDead(b)) - Number(isDead(a)) ||
+        a.createdAt.localeCompare(b.createdAt) ||
+        a.significance - b.significance,
+    );
+  }
+
   async #enforceLimits(userId) {
-    const overflow = [];
-    const mine = [...this.records.values()]
-      .filter((record) => record.subject.userId === userId)
-      .sort((a, b) => b.significance - a.significance || b.createdAt.localeCompare(a.createdAt));
-    overflow.push(...mine.slice(this.maxPerUser));
-    if (this.records.size - overflow.length > this.maxRecords) {
-      const all = [...this.records.values()]
-        .filter((record) => !overflow.includes(record))
-        .sort((a, b) => b.significance - a.significance || b.createdAt.localeCompare(a.createdAt));
-      overflow.push(...all.slice(this.maxRecords));
+    const overflow = new Set();
+    const mine = this.#evictionRank(
+      [...this.records.values()].filter((record) => record.subject.userId === userId),
+    );
+    // Rank puts the least-worth-keeping first; the survivors are the tail.
+    for (const record of mine.slice(0, Math.max(0, mine.length - this.maxPerUser))) {
+      overflow.add(record);
     }
-    if (overflow.length) {
-      await this.forget(overflow.map((record) => record.id));
-      await this.#audit("memory_evicted", { count: overflow.length });
+    if (this.records.size - overflow.size > this.maxRecords) {
+      const all = this.#evictionRank(
+        [...this.records.values()].filter((record) => !overflow.has(record)),
+      );
+      for (const record of all.slice(0, Math.max(0, all.length - overflow.size - this.maxRecords))) {
+        overflow.add(record);
+      }
+    }
+    if (overflow.size) {
+      await this.forget([...overflow].map((record) => record.id));
+      await this.#audit("memory_evicted", { count: overflow.size });
     }
   }
 
@@ -286,7 +346,11 @@ export class MemoryStore {
   // The log is append-only, so deletions and supersessions leave dead lines behind.
   // Rewrite it once the file is mostly history.
   async #compact() {
+    // Compaction is a free partial sweep: expired records are invisible to active()
+    // but were being rewritten to disk on every compaction, so drop them here.
+    const expiry = this.retentionDays ? this.now() - this.retentionDays * DAY_MS : null;
     const lines = [...this.records.values()]
+      .filter((record) => expiry === null || Date.parse(record.createdAt) >= expiry)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       .map((record) => JSON.stringify({ op: "put", at: record.createdAt, record }));
     for (const userId of this.optedOut) {
