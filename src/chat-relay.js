@@ -342,7 +342,7 @@ export class ChatRelayQueue {
         item.status = "pending";
         item.leaseToken = null;
         item.leaseUntil = null;
-        void this.#persist();
+        void this.#persistSafely();
       }
     }
   }
@@ -351,7 +351,7 @@ export class ChatRelayQueue {
     if (!this.items.has(item.id)) return;
     this.#remove(item);
     await this.#notifyDismiss(item, "expired");
-    await this.#persist();
+    await this.#persistSafely();
   }
 
   #activeItems() {
@@ -422,5 +422,14 @@ export class ChatRelayQueue {
       .catch(() => undefined)
       .then(() => atomicWrite(this.statePath, snapshot));
     return this.persisting;
+  }
+
+  // Fire-and-forget persistence for the timer-driven paths (sweep, expire): an
+  // atomicWrite rejection here (EPERM/EBUSY on Windows) must be logged, never left
+  // to escape as an unhandled rejection that terminates the process mid-sweep.
+  #persistSafely() {
+    return this.#persist().catch((error) =>
+      this.logger?.error?.("Could not persist chat relay state", error),
+    );
   }
 }

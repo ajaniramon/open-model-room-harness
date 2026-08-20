@@ -182,8 +182,29 @@ test("returns nothing for a participant who opted out", () => {
     buildMemoryBlock(store, { guildId: "g1", channelId: "c1", speakerUserId: "1" }).block,
     null,
   );
+});
+
+test("a note about an opted-out subject is never recalled, even on another's turn", () => {
+  // The stored note is about user "1"; user "3" is speaking. Opt-out must hide it.
+  const store = {
+    isOptedOut: (userId) => userId === "1",
+    active: () => [record({ subject: { userId: "1", displayName: "Owner" } })],
+  };
+  const { block } = buildMemoryBlock(store, {
+    guildId: "g1",
+    channelId: "c1",
+    speakerUserId: "3",
+  });
+  assert.doesNotMatch(block, /Windows service/);
+  assert.match(block, /say you do not remember/i);
+
+  // A note about a still-consenting subject is unaffected.
+  const consenting = {
+    isOptedOut: () => false,
+    active: () => [record({ subject: { userId: "2", displayName: "Luca" } })],
+  };
   assert.match(
-    buildMemoryBlock(store, { guildId: "g1", channelId: "c1", speakerUserId: "2" }).block,
+    buildMemoryBlock(consenting, { guildId: "g1", channelId: "c1", speakerUserId: "3" }).block,
     /Windows service/,
   );
 });

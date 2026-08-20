@@ -1,3 +1,4 @@
+import { boundedFetch, readBoundedBuffer } from "./http.js";
 import { isRetryableRequestError, retry } from "./retry.js";
 
 const DEFAULT_ALIASES = Object.freeze({
@@ -36,11 +37,14 @@ function decodeBase64Image(value, maxBytes) {
   return { buffer, extension: extensionForMime(mime) };
 }
 
-function isSafeHostedImageUrl(rawUrl) {
+export function isSafeHostedImageUrl(rawUrl) {
   try {
     const url = new URL(rawUrl);
     if (url.protocol !== "https:") return false;
     const host = url.hostname.toLowerCase();
+    // Reject IP-literal hosts outright: the IPv4 checks below never covered IPv6
+    // literals ([::1], [::ffff:127.0.0.1]), which otherwise pass to the loopback.
+    if (host.startsWith("[")) return false;
     if (host === "localhost" || host.endsWith(".local")) return false;
     if (/^(?:127\.|10\.|192\.168\.|169\.254\.|0\.)/.test(host)) return false;
     const match = host.match(/^172\.(\d+)\./);
@@ -67,13 +71,15 @@ export class NanoGptImageClient {
 
   async listModels() {
     if (this.modelCache && Date.now() < this.modelCacheExpiresAt) return this.modelCache;
-    const response = await this.fetch(`${this.baseUrl}/images/models`, {
+    // Bounded: this is reached with a user-supplied model name before the
+    // generation timeout exists, so an unresponsive host must not hang the turn.
+    const payload = await boundedFetch(`${this.baseUrl}/images/models`, {
+      fetchImpl: this.fetch,
+      timeoutMs: this.timeoutMs,
+      parse: "json",
+      label: "NanoGPT image catalog",
       headers: { Authorization: `Bearer ${this.apiKey}` },
     });
-    if (!response.ok) {
-      throw new Error(`NanoGPT image catalog returned HTTP ${response.status}.`);
-    }
-    const payload = await response.json();
     const models = Array.isArray(payload?.data) ? payload.data : [];
     this.modelCache = models;
     this.modelCacheExpiresAt = Date.now() + 10 * 60_000;
@@ -157,12 +163,18 @@ export class NanoGptImageClient {
             if (!isSafeHostedImageUrl(url)) {
               throw new Error("NanoGPT returned an unsafe or unsupported image URL.");
             }
-            const hosted = await this.fetch(url, { signal: controller.signal });
+            // redirect: "error" so a host that passed the allow-list cannot 302 to
+            // internal metadata, and a streaming read so the size cap is enforced
+            // before the whole body is buffered.
+            const hosted = await this.fetch(url, {
+              signal: controller.signal,
+              redirect: "error",
+            });
             if (!hosted.ok) {
               throw new Error(`Hosted image download returned HTTP ${hosted.status}.`);
             }
-            const buffer = Buffer.from(await hosted.arrayBuffer());
-            if (!buffer.length || buffer.length > this.maxBytes) {
+            const buffer = await readBoundedBuffer(hosted, this.maxBytes, "Hosted generated image");
+            if (!buffer.length) {
               throw new Error("Hosted generated image is empty or exceeds the upload limit.");
             }
             images.push({

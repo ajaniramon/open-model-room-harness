@@ -1,3 +1,4 @@
+import { boundedFetch } from "./http.js";
 import { X_FETCH_TOOL, X_SEARCH_TOOL } from "./x-tools.js";
 
 export const WEB_SEARCH_TOOL = Object.freeze({
@@ -254,27 +255,27 @@ export class WebPagePrefetcher {
   }
 
   async fetchPlainText(url, maxChars) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20_000);
+    // Cap the download by bytes so a link to a 100 MB raw file (e.g. a GitHub
+    // blob) is stream-cancelled instead of buffered whole to keep ~maxChars.
+    const maxBytes = Math.max(64_000, maxChars * 8);
+    let text;
     try {
-      const response = await this.fetch(url, {
+      text = await boundedFetch(url, {
+        fetchImpl: this.fetch,
+        timeoutMs: 20_000,
+        parse: "text",
+        maxBytes,
+        label: new URL(url).hostname,
         headers: { Accept: "text/plain" },
-        signal: controller.signal,
       });
-      if (!response.ok) {
-        return `ERROR: ${new URL(url).hostname} returned HTTP ${response.status}.`;
-      }
-      const text = await response.text();
-      if (!text.trim()) return "ERROR: the plain-text endpoint returned no content.";
-      if (text.length > maxChars) {
-        return `${text.slice(0, maxChars)}\n… (truncated, ${text.length - maxChars} more chars)`;
-      }
-      return text;
     } catch (error) {
-      return `ERROR: ${error?.name || "Error"}: ${error?.message || error}`;
-    } finally {
-      clearTimeout(timeout);
+      return `ERROR: ${error?.message || error?.name || error}`;
     }
+    if (!text.trim()) return "ERROR: the plain-text endpoint returned no content.";
+    if (text.length > maxChars) {
+      return `${text.slice(0, maxChars)}\n… (truncated, ${text.length - maxChars} more chars)`;
+    }
+    return text;
   }
 
   async describe(content) {

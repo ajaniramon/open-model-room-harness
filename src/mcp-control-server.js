@@ -1386,9 +1386,14 @@ export function startMcpControlServer({
       sendJson(res, 503, { error: "Wake status is not configured." });
       return;
     }
+    // The SSE sessionId is a bearer-equivalent value handed to the MCP client so
+    // it can POST follow-ups to /messages. It must authorize only that path — not
+    // the scope-editor or discovery APIs, which require the privileged token.
+    const sessionAuthorized =
+      path === "/messages" && sessionId !== "" && authorizedSessions.has(sessionId);
     const authorized =
       (wakeStatusRequest && hasValidToken(req, url, wakeToken)) ||
-      (!wakeStatusRequest && (hasValidToken(req, url, token) || (sessionId && authorizedSessions.has(sessionId))));
+      (!wakeStatusRequest && (hasValidToken(req, url, token) || sessionAuthorized));
     if (!authorized) {
       rejectUnauthorized(res);
       return;

@@ -103,9 +103,15 @@ export function buildMemoryBlock(store, options) {
   if (!store) return { block: null, records: [], dropped: 0 };
   const { speakerUserId, guildId = null, channelId, ownerTurn = false } = options;
   if (store.isOptedOut(speakerUserId)) return { block: null, records: [], dropped: 0 };
+  // Opt-out means "nothing about them is recalled", not only "nothing while they
+  // speak": notes whose subject opted out must never be injected, on anyone's turn.
   const candidates = (
     readsAcrossGuilds({ guildId, ownerTurn }) ? store.active() : store.active({ guildId })
-  ).filter((record) => isReadable(record, { guildId, channelId, ownerTurn }));
+  ).filter(
+    (record) =>
+      !store.isOptedOut(record.subject.userId) &&
+      isReadable(record, { guildId, channelId, ownerTurn }),
+  );
   const ordered = orderMemories(candidates, options);
   const { selected, dropped } = selectWithinBudget(ordered, options);
   return { block: formatMemoryBlock(selected), records: selected, dropped };

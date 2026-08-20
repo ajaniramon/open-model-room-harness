@@ -1,4 +1,5 @@
-import { retry } from "./retry.js";
+import { boundedFetch } from "./http.js";
+import { isRetryableRequestError, retry } from "./retry.js";
 
 export const X_SEARCH_TOOL = Object.freeze({
   type: "function",
@@ -147,31 +148,22 @@ export class KeylessXDiscovery {
 
   async fetchHtml(url, provider) {
     return retry(
-      async () => {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 20_000);
-        try {
-          const response = await this.fetch(url, {
-            headers: {
-              Accept: "text/html",
-              "User-Agent":
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
-            },
-            signal: controller.signal,
-          });
-          if (!response.ok) {
-            throw new Error(`${provider} returned HTTP ${response.status}.`);
-          }
-          const html = await response.text();
-          if (html.length > 2_000_000) {
-            throw new Error(`${provider} response was unexpectedly large.`);
-          }
-          return html;
-        } finally {
-          clearTimeout(timeout);
-        }
-      },
-      { attempts: 2, backoffMs: 0, label: `${provider} request` },
+      () =>
+        boundedFetch(url, {
+          fetchImpl: this.fetch,
+          timeoutMs: 20_000,
+          parse: "text",
+          maxBytes: 2_000_000,
+          label: `${provider} request`,
+          headers: {
+            Accept: "text/html",
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
+          },
+        }),
+      // A search engine serving a 403/captcha to the datacenter IP is deterministic;
+      // only transport-shaped failures are worth a second 20 s attempt.
+      { attempts: 2, backoffMs: 0, shouldRetry: isRetryableRequestError, label: `${provider} request` },
     );
   }
 

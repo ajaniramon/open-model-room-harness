@@ -1,0 +1,514 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Barrida del Harness</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --paper: #F6F7F5;
+    --ink: #14181D;
+    --ink-soft: #4A545E;
+    --line: #D8DCD9;
+    --card: #FFFFFF;
+    --accent: #0E7C66;
+    --accent-soft: #E3F0EC;
+    --crit: #B3372B;
+    --crit-soft: #F7E7E4;
+    --med: #A16E1F;
+    --med-soft: #F6EEDD;
+    --low: #3A6EA5;
+    --low-soft: #E5EDF5;
+    --mono-bg: #EDEFEC;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #14181D;
+      --ink: #E8EAE7;
+      --ink-soft: #9AA4AD;
+      --line: #2C333B;
+      --card: #1B2128;
+      --accent: #4FB49E;
+      --accent-soft: #1C2E2A;
+      --crit: #E07A6C;
+      --crit-soft: #34211E;
+      --med: #D6A353;
+      --med-soft: #322A1B;
+      --low: #7FA8D4;
+      --low-soft: #1E2833;
+      --mono-bg: #232A32;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.55;
+  }
+  main { max-width: 76ch; margin: 0 auto; padding: 3rem 1.25rem 5rem; }
+  h1, h2, h3 {
+    font-family: "IBM Plex Sans Condensed", "Arial Narrow", sans-serif;
+    line-height: 1.15;
+    text-wrap: balance;
+  }
+  h1 { font-size: 2.4rem; font-weight: 700; margin: 0 0 .3rem; }
+  h2 {
+    font-size: 1.5rem; font-weight: 700; margin: 3rem 0 1rem;
+    padding-top: 1.2rem; border-top: 2px solid var(--ink);
+  }
+  h3 { font-size: 1.06rem; font-weight: 600; margin: 0 0 .3rem; font-family: "IBM Plex Sans", sans-serif; }
+  p { margin: .5rem 0; }
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace; font-size: .78rem;
+    letter-spacing: .08em; text-transform: uppercase; color: var(--accent);
+  }
+  .lede { color: var(--ink-soft); font-size: 1.05rem; max-width: 62ch; }
+  .counts { display: flex; gap: 1rem; flex-wrap: wrap; margin: 1.4rem 0 0; }
+  .count {
+    background: var(--card); border: 1px solid var(--line); border-radius: 6px;
+    padding: .55rem .9rem; min-width: 7.5rem;
+  }
+  .count b { display: block; font-size: 1.5rem; font-variant-numeric: tabular-nums; }
+  .count span { font-size: .8rem; color: var(--ink-soft); }
+  nav.toc {
+    margin: 1.8rem 0 0; padding: .9rem 1.1rem; background: var(--card);
+    border: 1px solid var(--line); border-radius: 6px; font-size: .92rem;
+  }
+  nav.toc a { color: var(--accent); text-decoration: none; }
+  nav.toc a:hover, nav.toc a:focus-visible { text-decoration: underline; }
+  nav.toc ol { margin: .3rem 0 0; padding-left: 1.3rem; }
+  code, .loc {
+    font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+    font-size: .84em; background: var(--mono-bg); border-radius: 4px; padding: .08em .35em;
+  }
+  .finding {
+    background: var(--card); border: 1px solid var(--line); border-radius: 6px;
+    padding: .95rem 1.1rem; margin: .9rem 0;
+  }
+  .finding header { display: flex; gap: .6rem; align-items: baseline; flex-wrap: wrap; margin-bottom: .25rem; }
+  .chip {
+    font-family: "IBM Plex Mono", monospace; font-size: .68rem; font-weight: 500;
+    letter-spacing: .06em; text-transform: uppercase; border-radius: 999px;
+    padding: .14em .6em; white-space: nowrap;
+  }
+  .chip.crit { color: var(--crit); background: var(--crit-soft); }
+  .chip.med  { color: var(--med);  background: var(--med-soft); }
+  .chip.low  { color: var(--low);  background: var(--low-soft); }
+  .chip.ref  { color: var(--accent); background: var(--accent-soft); }
+  .finding .loc { display: inline-block; margin-bottom: .35rem; color: var(--ink-soft); background: var(--mono-bg); }
+  .finding p { font-size: .95rem; }
+  .fix { border-left: 3px solid var(--accent); padding-left: .75rem; color: var(--ink-soft); }
+  .fix b { color: var(--ink); }
+  table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+  .tablewrap { overflow-x: auto; margin: 1rem 0; border: 1px solid var(--line); border-radius: 6px; background: var(--card); }
+  th, td { text-align: left; padding: .5rem .7rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th {
+    font-family: "IBM Plex Mono", monospace; font-size: .72rem; letter-spacing: .07em;
+    text-transform: uppercase; color: var(--ink-soft);
+  }
+  tr:last-child td { border-bottom: none; }
+  td.num { font-variant-numeric: tabular-nums; font-family: "IBM Plex Mono", monospace; font-size: .84rem; }
+  .note {
+    background: var(--accent-soft); border-radius: 6px; padding: .8rem 1rem;
+    font-size: .92rem; margin: 1rem 0;
+  }
+  a { color: var(--accent); }
+  @media (prefers-reduced-motion: no-preference) {
+    html { scroll-behavior: smooth; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <p class="eyebrow">open-model-room-harness · 2026-08-20 · 4 agentes Opus, solo lectura</p>
+  <h1>Barrida del Harness</h1>
+  <p class="lede">Revisión a fondo en cuatro dominios: núcleo del bot de Discord, capa de inferencia y herramientas, subsistema de memoria, y relay/MCP/infra. Todos los hallazgos están verificados contra el código con <code>fichero:línea</code>; nada especulativo. Todo aplica también al deploy de <code>selta-discord</code> — portar tras cada fix.</p>
+
+  <div class="counts">
+    <div class="count"><b>27</b><span>bugs verificados</span></div>
+    <div class="count"><b>12</b><span>refactors / dedup</span></div>
+    <div class="count"><b>9</b><span>mejoras y features</span></div>
+    <div class="count"><b>13</b><span>críticos</span></div>
+  </div>
+
+  <nav class="toc" aria-label="Índice">
+    <b>Índice</b>
+    <ol>
+      <li><a href="#top">Top 10 — por dónde empezar</a></li>
+      <li><a href="#relay">Bugs: relay, MCP e infra</a></li>
+      <li><a href="#core">Bugs: núcleo del bot</a></li>
+      <li><a href="#inference">Bugs: inferencia y tools</a></li>
+      <li><a href="#memory">Bugs: memoria</a></li>
+      <li><a href="#refactors">Refactors de deduplicación</a></li>
+      <li><a href="#features">Mejoras y features</a></li>
+      <li><a href="#orden">Orden de ataque sugerido</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="top">Top 10 — por dónde empezar</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>#</th><th>Qué</th><th>Por qué primero</th></tr></thead>
+    <tbody>
+      <tr><td class="num">1</td><td>Bloque de memoria no cacheable (R-M1)</td><td>El mayor coste recurrente: pagas el prefix entero sin caché en casi cada turno, y el comentario del código afirma lo contrario.</td></tr>
+      <tr><td class="num">2</td><td>Relay: respuesta duplicada tras fallo post-envío (R-I1)</td><td>El usuario ve la misma respuesta dos veces; el doc lo marca como "mitigado" y no lo está.</td></tr>
+      <tr><td class="num">3</td><td><code>mcp:control</code> separado pisa el estado del relay (R-I2)</td><td>Pérdida real de turnos pendientes en disco; respuestas descartadas.</td></tr>
+      <tr><td class="num">4</td><td>Fallo de TTS descarta la respuesta del modelo (R-C2)</td><td>Respuesta pagada tirada a la basura; fix de una línea.</td></tr>
+      <tr><td class="num">5</td><td>Opt-out de memoria no filtra notas <em>sobre</em> el usuario (R-M2)</td><td>Promesa rota al usuario; fix de una línea.</td></tr>
+      <tr><td class="num">6</td><td><code>list</code>/<code>export</code> publican notas privadas en el canal (R-M3)</td><td>Filtración de privacidad con tus propias notas owner-only.</td></tr>
+      <tr><td class="num">7</td><td>Fallback de modelo re-ejecuta tool calls pagadas (R-N2)</td><td>Doble facturación de inferencia y Tavily en el peor caso.</td></tr>
+      <tr><td class="num">8</td><td>Reserva de participación filtrada bajo maintenance (R-C3)</td><td>12 eventos y el presupuesto del guild queda bloqueado para siempre.</td></tr>
+      <tr><td class="num">9</td><td><code>sessionId</code> SSE autoriza endpoints admin (R-I7)</td><td>Credencial de bajo valor elevada a admin completo; seguridad.</td></tr>
+      <tr><td class="num">10</td><td><code>boundedFetch</code> compartido (F-1)</td><td>Elimina 9 copias del patrón fetch+timeout y hace imposibles varios bugs de esta lista.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2 id="relay">Bugs: relay, MCP e infra</h2>
+
+  <div class="finding" id="ri1"><header><span class="chip crit">crítico</span><h3>R-I1 · Respuesta del relay entregada dos veces cuando algo falla después del envío</h3></header>
+    <span class="loc">chat-relay.js:297-317 · discord-bot.js:1361-1374</span>
+    <p><code>submit()</code> elimina el item y trata cualquier throw del handler como "fallo de entrega". Pero el handler hace más cosas después del <code>sendResponse</code>: <code>commit()</code> de participación (escritura a disco que puede fallar) y bookkeeping. Si eso lanza, el item vuelve a <code>pending</code> y el siguiente worker reenvía la misma respuesta. Igual con respuestas multi-chunk: fallo en el chunk 3 de 5 → mensaje parcial + reenvío completo.</p>
+    <p class="fix"><b>Fix:</b> marcar <code>delivered</code> tras el primer envío correcto y solo reencolar cuando <code>!delivered</code>; envolver el bookkeeping post-envío en su propio try/catch que loguea y traga.</p>
+  </div>
+
+  <div class="finding" id="ri2"><header><span class="chip crit">crítico</span><h3>R-I2 · <code>npm run mcp:control</code> monta el mismo estado del relay sin handlers y lo machaca</h3></header>
+    <span class="loc">mcp-control-index.js:207-310</span>
+    <p>Dos procesos (bot + control) cargan <code>state/chat-relay.json</code> en Maps independientes y cada <code>#persist()</code> escribe un snapshot completo del suyo: el último en escribir borra los items del otro. Si el worker apunta al proceso de control, <code>submit()</code> lanza "no reply handler", quema intentos y descarta la respuesta. Además ese proceso arranca <em>sin</em> <code>auditLogger</code>: DMs y sends con scope sin auditar.</p>
+    <p class="fix"><b>Fix:</b> rechazar arrancar con <code>chatRelay.enabled</code> sin handlers (o modo solo-lectura), lockfile con pid en <code>load()</code>, y pasar un audit logger.</p>
+  </div>
+
+  <div class="finding" id="ri3"><header><span class="chip crit">crítico</span><h3>R-I3 · Un error de persistencia en <code>sweep()</code>/<code>#expire()</code> tumba el proceso</h3></header>
+    <span class="loc">chat-relay.js:337-355</span>
+    <p><code>void this.#persist()</code> sin <code>.catch</code>: un <code>EPERM</code>/<code>EBUSY</code> de Windows (antivirus, el segundo proceso de R-I2) escapa como unhandled rejection y Node ≥15 mata el bot — justo durante un sweep rutinario bajo carga. <code>enqueue</code> ya lo hace bien en la línea 215.</p>
+    <p class="fix"><b>Fix:</b> <code>#persistSafely()</code> con catch+log usado en todos los call sites.</p>
+  </div>
+
+  <div class="finding" id="ri4"><header><span class="chip med">medio</span><h3>R-I4 · <code>attempts</code> cuenta claims, no intentos de entrega</h3></header>
+    <span class="loc">chat-relay.js:265-271, 303-314</span>
+    <p>Un worker que reclama y se cala (pestaña cerrada, MV3 evicted) quema los 3 "intentos" en 6 minutos sin haber intentado entregar nunca; el primer 503 real de Discord entonces descarta la respuesta sin retry.</p>
+    <p class="fix"><b>Fix:</b> separar <code>claims</code> (con su propio cap) de <code>deliveryAttempts</code> y presupuestar el requeue con el segundo. Reconciliar el TTL de <code>config.example.json</code> (86400s) con el default real (600s).</p>
+  </div>
+
+  <div class="finding" id="ri5"><header><span class="chip med">medio</span><h3>R-I5 · El shutdown no cierra el audit logger de runtime y destruye Discord antes que MCP</h3></header>
+    <span class="loc">index.js:138-154</span>
+    <p><code>runtimeControlAuditLogger</code> (el stream que registra las escrituras MCP privilegiadas) nunca se cierra: en SIGTERM sus escrituras en vuelo se pierden con <code>process.exit</code>. Y <code>client.destroy()</code> corre antes de <code>mcpControlServer.close()</code>: durante la ventana, los <code>complete_chat_relay_item</code> fallan al fetch de canal y queman intentos.</p>
+    <p class="fix"><b>Fix:</b> reordenar (MCP primero, luego Discord, luego flush), cerrar el logger que falta, y <code>Promise.race</code> con timeout de 5s.</p>
+  </div>
+
+  <div class="finding" id="ri6"><header><span class="chip crit">crítico</span><h3>R-I6 · Leak de un <code>McpServer</code>+transport por request; <code>close()</code> puede colgarse para siempre</h3></header>
+    <span class="loc">mcp-control-server.js:1414-1470, 1623-1632</span>
+    <p>Cada POST streamable crea servidor+transport que nunca se cierran ni se registran; el GET de stream largo tampoco entra en <code>transports</code>, así que <code>httpServer.close()</code> espera una conexión que nadie cerrará: SIGTERM cuelga hasta el SIGKILL del supervisor (y se salta el flush de R-I5).</p>
+    <p class="fix"><b>Fix:</b> registrar todos los transports, <code>res.on("close")</code> → cerrar ambos, y <code>closeAllConnections()</code> en el close.</p>
+  </div>
+
+  <div class="finding" id="ri7"><header><span class="chip crit">crítico</span><h3>R-I7 · Un <code>sessionId</code> de SSE autoriza <em>todos</em> los endpoints, incluida la mutación de config.json</h3></header>
+    <span class="loc">mcp-control-server.js:1389-1395</span>
+    <p>El sessionId (visible para el worker del relay) se pensó para <code>POST /messages</code>, pero tal cual autoriza también <code>PUT/DELETE /api/discord-scopes/*</code> — que puede crear un scope con permiso de envío hacia cualquier guild — y la enumeración de guilds/canales.</p>
+    <p class="fix"><b>Fix:</b> restringir la rama de sesión a <code>path === "/messages"</code>; de paso, <code>timingSafeEqual</code> en <code>hasValidToken</code> y deprecar el token en URL.</p>
+  </div>
+
+  <div class="finding" id="ri8"><header><span class="chip low">bajo</span><h3>R-I8 · El panel de scopes borra <code>saved.name</code> antes de auditarlo</h3></header>
+    <span class="loc">mcp-control-server.js:1538-1552</span>
+    <p><code>delete discordScopes[saved.name].name</code> muta el propio <code>saved</code>: el registro de auditoría de la mutación más privilegiada del panel sale con <code>scope: undefined</code>, y la respuesta JSON sin nombre.</p>
+    <p class="fix"><b>Fix:</b> destructurar como hace la tool MCP (<code>:909-923</code>); extraer un <code>applyScopeUpdate()</code> común a tool y ruta HTTP.</p>
+  </div>
+
+  <div class="finding" id="ri9"><header><span class="chip med">medio</span><h3>R-I9 · <code>compactContext</code> recorta los mensajes más nuevos, no los más viejos</h3></header>
+    <span class="loc">chat-relay.js:10-22</span>
+    <p>El presupuesto se consume en orden cronológico y hace <code>break</code> al agotarse: en canales activos, los turnos inmediatamente anteriores al trigger — los que más importan — se caen del item del relay sin marca alguna.</p>
+    <p class="fix"><b>Fix:</b> recorrer en reversa, acumular, <code>reverse()</code>; añadir <code>truncated: true</code> al item público.</p>
+  </div>
+
+  <div class="finding" id="ri10"><header><span class="chip med">medio</span><h3>R-I10 · El dedupe del enqueue solo mira <code>pending</code>: redelivery tras restart duplica el item</h3></header>
+    <span class="loc">chat-relay.js:164-167</span>
+    <p>Tras un restart, <code>handledMessageIds</code> está vacío; si el gateway reentrega mientras el item restaurado está <code>leased</code>, se encola un segundo item para el mismo mensaje: dos respuestas. Es la misma clase de bug que ya fixeamos, pero en la capa del relay donde vive el caso restart.</p>
+    <p class="fix"><b>Fix:</b> dedupe contra <code>pending</code>+<code>leased</code> y persistir una lista acotada de messageIds recientes en el estado.</p>
+  </div>
+
+  <div class="finding" id="ri11"><header><span class="chip med">medio</span><h3>R-I11 · Los items restaurados pierden timer de expiración, audio y el check de maintenance</h3></header>
+    <span class="loc">chat-relay.js:97-124 · discord-bot.js:807-835</span>
+    <p><code>load()</code> no reprograma timers, y el handler del camino restaurado no comprueba maintenance, ignora <code>audioEnabled</code> y no acota longitud — todo cosas que el camino vivo sí hace.</p>
+    <p class="fix"><b>Fix:</b> programar timers en <code>load()</code> y unificar ambos caminos en un <code>deliverRelayReply()</code> compartido.</p>
+  </div>
+
+  <div class="finding" id="ri12"><header><span class="chip med">medio</span><h3>R-I12 · Logs de excepción cruda filtran cuerpos de mensajes salientes</h3></header>
+    <span class="loc">mcp-control-server.js:874, 1034, 1296, 1610</span>
+    <p><code>DiscordAPIError.requestBody</code> lleva el contenido completo del mensaje; <code>console.error(error)</code> lo vuelca a stdout, que el supervisor captura sin rotación ni redacción. Es el ítem 4 de hardening del propio doc, confirmado abierto.</p>
+    <p class="fix"><b>Fix:</b> <code>describeError()</code> exportado desde request-logger (name, message truncado, status, correlationId) en los cuatro call sites, y duplicar al audit JSONL.</p>
+  </div>
+
+  <h2 id="core">Bugs: núcleo del bot</h2>
+
+  <div class="finding"><header><span class="chip crit">crítico</span><h3>R-C2 · Un fallo de ElevenLabs tira la respuesta del modelo</h3></header>
+    <span class="loc">discord-bot.js:689-694</span>
+    <p>El catch reasigna <code>content</code> con la disculpa, así que el fallback "a texto" envía la disculpa y descarta la respuesta ya pagada.</p>
+    <p class="fix"><b>Fix:</b> anteponer el aviso en vez de sustituir: <code>content = aviso + "\n\n" + content</code>.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip crit">crítico</span><h3>R-C3 · Relay silenciado por maintenance filtra la reserva de participación para siempre</h3></header>
+    <span class="loc">discord-bot.js:1361-1363, 1382 · participation-policy.js:270-274</span>
+    <p>El early-return de <code>maintenanceSilenced()</code> en <code>onReply</code> no hace ni commit ni cancel; la reserva cuenta contra el presupuesto global del guild indefinidamente. 12 eventos = guild bloqueado en <code>global_budget</code>.</p>
+    <p class="fix"><b>Fix:</b> <code>participationController?.cancel(id)</code> antes del return.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip med">medio</span><h3>R-C1 · Los rechazos owner-only se disparan en turnos espontáneos</h3></header>
+    <span class="loc">discord-bot.js:1189, 1205, 1242</span>
+    <p><code>audioModeCommand</code>/<code>imageRequest</code>/<code>codexRequest</code> se parsean sin exigir <code>directResponse</code> (a diferencia de participation): un turno espontáneo sobre "draw a picture of…" hace que el bot suelte "Image generation is owner-only" sin que nadie le hablara — falso además si el autor es el owner.</p>
+    <p class="fix"><b>Fix:</b> <code>directResponse ? parse…(…) : null</code> en los tres.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip med">medio</span><h3>R-C4 · <code>SpontaneousGate.consider()</code> quema el slot antes del veto del limitador auto</h3></header>
+    <span class="loc">discord-bot.js:903-905 · spontaneous.js:47-52</span>
+    <p><code>consider()</code> muta (resetea contador, arranca cooldown de 20 min, consume intento/hora) y <em>después</em> se consulta <code>canRecordAutoResponse</code>: si este veta, el slot se perdió para un mensaje que nunca salió. Los dos limitadores se matan de hambre entre sí. Bonus: <code>recordAutoResponse</code> en la línea 1371 no existe en el repo — no-op muerto.</p>
+    <p class="fix"><b>Fix:</b> consultar el limitador primero, o dividir en <code>peek()</code>/<code>commitSelection()</code>.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip med">medio</span><h3>R-C7 · Los DMs esquivan por completo la política de participación</h3></header>
+    <span class="loc">discord-bot.js:446-448 · participation-policy.js:238</span>
+    <p>El branch de DM retorna antes del controller y <code>reserve()</code> se salta con <code>!guildId</code>: cualquier usuario que comparta guild puede hacer DM en bucle sin presupuesto, cooldown ni autoban — una llamada de modelo por mensaje.</p>
+    <p class="fix"><b>Fix:</b> scope sintético <code>dm:&lt;userId&gt;</code> para reservas de DM, manteniendo el bypass de owner.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip med">medio</span><h3>R-C6 · Fallos post-entrega producen un segundo mensaje contradictorio</h3></header>
+    <span class="loc">discord-bot.js:1393-1414</span>
+    <p>El try cubre entrega y bookkeeping: un 500 transitorio en el chunk 2 de 3 da respuesta parcial + "Something failed while contacting the model", que es falso. Hermano del R-I1.</p>
+    <p class="fix"><b>Fix:</b> flag <code>delivered</code> tras el primer envío; en el catch, si <code>delivered</code>, solo log.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip low">bajo</span><h3>R-C5 · El parser de imagen sin keyword "model" se traga el sujeto</h3></header>
+    <span class="loc">discord-bot.js:333-335</span>
+    <p>"draw a picture with cats, sitting on…" → <code>requestedModel = "cats"</code> → error de catálogo y disculpa genérica.</p>
+    <p class="fix"><b>Fix:</b> exigir <code>::</code> en la forma sin keyword, o validar el token contra aliases antes de aceptarlo.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip low">bajo</span><h3>R-C8 · <code>!audioModeCommand</code> es truthiness: "disable audio mode" paga vision + prefetch</h3></header>
+    <span class="loc">discord-bot.js:1109, 1137, 1162</span>
+    <p><code>parseAudioModeCommand</code> devuelve <code>false</code> para el disable, que pasa los tres guards <code>!audioModeCommand</code>: análisis de visión y prefetchers corren para un mensaje de control puro.</p>
+    <p class="fix"><b>Fix:</b> un <code>isControlOnlyTurn</code> calculado una vez con <code>audioModeCommand !== null</code>.</p>
+  </div>
+
+  <h2 id="inference">Bugs: inferencia y tools</h2>
+
+  <div class="finding"><header><span class="chip crit">crítico</span><h3>R-N1 · <code>listModels()</code> sin timeout: una petición de imagen puede colgar el turno para siempre</h3></header>
+    <span class="loc">image-generation.js:69-72</span>
+    <p>Única llamada saliente del dominio sin AbortController, alcanzable con modelo user-supplied antes de crear el controller de generación: si NanoGPT acepta la conexión y no responde, el handler se bloquea, la reserva no se libera y no hay ni mensaje de error.</p>
+    <p class="fix"><b>Fix:</b> mismo patrón controller/clearTimeout — o directamente el <code>boundedFetch</code> de F-1.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip crit">crítico</span><h3>R-N2 · El fallback reinicia el tool-loop entero en fallos semánticos: tool calls pagadas ×2</h3></header>
+    <span class="loc">model-client.js:241-256, 294-307</span>
+    <p><code>converse</code> lanza errores no-transporte ("exceeded N tool iterations", "no visible response content", "no tool runtime") que el fallback captura y re-ejecuta completo: hasta 4 búsquedas Tavily más + 5 inferencias más, para acabar casi seguro en el mismo error. ~2× de facturación y latencia.</p>
+    <p class="fix"><b>Fix:</b> hacer fallback solo en fallos con forma de transporte (<code>isRetryableRequestError || error.status</code>), y no tras haber ejecutado tools (no idempotentes). Sustituir el <code>console.warn</code> por el logger inyectado.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip crit">crítico</span><h3>R-N4 · Descarga de imagen hospedada: IPv6 pasa el allowlist, sigue redirects y bufferea sin límite</h3></header>
+    <span class="loc">image-generation.js:39-52, 157-167</span>
+    <p>Verificado ejecutando el predicado: <code>https://[::1]/</code> y <code>[::ffff:127.0.0.1]</code> pasan (checks solo IPv4-string); sin <code>redirect: "error"</code> (a diferencia de vision.js) un 302 salta el allowlist hacia metadata interna; y <code>arrayBuffer()</code> materializa el cuerpo entero antes del check de tamaño. Requiere proveedor hostil/MITM, pero es el control SSRF implementado mal.</p>
+    <p class="fix"><b>Fix:</b> rechazar hosts con corchetes / <code>net.isIP</code>, <code>redirect: "error"</code>, y reutilizar el <code>readBoundedImage</code> streaming de vision.js.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip med">medio</span><h3>R-N3 · El <code>tool_call_id</code> sintetizado solo se escribe en el resultado, no en la copia del assistant</h3></header>
+    <span class="loc">model-client.js:310-324</span>
+    <p>Si el provider omite <code>id</code>, el fallback <code>tool_0_0</code> produce un par inconsistente garantizado: 400 en servidores OpenAI-shaped y en Anthropic (el <code>id: undefined</code> desaparece en el stringify).</p>
+    <p class="fix"><b>Fix:</b> acuñar el id una vez y mutarlo en el toolCall <em>antes</em> de pushear el mensaje assistant.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip med">medio</span><h3>R-N5 · MAX_TOKENS/SAFETY de Gemini se convierte en error duro sin diagnóstico</h3></header>
+    <span class="loc">model-client.js:485-487</span>
+    <p>Candidato sin <code>content.parts</code> (thinking agotado, filtro de safety) lanza "no candidate content" sin <code>finishReason</code> ni <code>blockReason</code>, no retryable, sin pasar por el retry de respuesta vacía.</p>
+    <p class="fix"><b>Fix:</b> incluir <code>finishReason/blockReason</code> en el mensaje y devolver contenido vacío para MAX_TOKENS para que fluya por el camino uniforme.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip med">medio</span><h3>R-N6 · <code>fetchHtml</code> reintenta errores deterministas: hasta 80 s bloqueando el turno</h3></header>
+    <span class="loc">x-tools.js:149-175</span>
+    <p>Sin <code>shouldRetry</code> (default: todo) y sin <code>error.status</code>: dos buscadores × 2 intentos × 20 s contra 403/captcha que jamás cambiará, dentro de un turno vivo.</p>
+    <p class="fix"><b>Fix:</b> stampear <code>status</code>, pasar <code>isRetryableRequestError</code>, y deadline global para <code>searchPostUrls</code>.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip med">medio</span><h3>R-N7 · Retry en timeout de cliente en rutas pagadas no idempotentes</h3></header>
+    <span class="loc">image-generation.js:110-112 · retry.js:13-19 · audio-mode.js:112</span>
+    <p><code>AbortError</code> es retryable, pero un timeout de cliente a 180 s es justo el caso donde la generación seguramente terminó y se facturó: dos generaciones pagadas, una entregada, 360 s de peor caso. Igual en ElevenLabs.</p>
+    <p class="fix"><b>Fix:</b> predicado sin AbortError en rutas pagadas (o separar <code>isRetryableIdempotentError</code>).</p>
+  </div>
+
+  <div class="finding"><header><span class="chip med">medio</span><h3>R-N8 · Prefetch de texto plano y HTML de búsqueda buferean el cuerpo entero antes del límite</h3></header>
+    <span class="loc">web-tools.js:267-271 · x-tools.js:165-168</span>
+    <p>Un link a un <code>blob</code> de 100 MB en raw.githubusercontent se descarga completo (×2 en memoria UTF-16) para quedarse con ~1500 chars, dos en paralelo, antes de consultar al modelo.</p>
+    <p class="fix"><b>Fix:</b> check de <code>content-length</code> + lectura streaming con cancelación (el lector de vision.js, elevado al helper común).</p>
+  </div>
+
+  <div class="finding"><header><span class="chip med">medio</span><h3>R-N9 · <code>content</code> en forma de array de un servidor OpenAI-compatible: 2 inferencias y error</h3></header>
+    <span class="loc">model-client.js:509-513, 288</span>
+    <p>vLLM/proxies que devuelven <code>content: [{type:"text",…}]</code> → cadena vacía → retry idéntico → error "no visible response content (finish_reason=stop)" que despista. El helper <code>visibleText</code> ya existe y no se usa aquí.</p>
+    <p class="fix"><b>Fix:</b> normalizar con <code>visibleText</code> en la entrada del branch OpenAI.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip low">bajo</span><h3>R-N10 · El sniffing del prefijo <code>"ERROR:"</code> reporta como fallo páginas legítimas</h3></header>
+    <span class="loc">web-tools.js:296-308 · x-tools.js:406-409</span>
+    <p>Un fichero de logs enlazado cuyo primer línea es <code>ERROR: connection refused</code> se marca "(not downloaded)" y el system prompt obliga a JJ a decir que no pudo abrirlo — habiéndolo descargado bien. Síntoma del doble protocolo return-string vs throw.</p>
+    <p class="fix"><b>Fix:</b> resultado etiquetado <code>{ok, text|detail}</code> en la capa interna; el string <code>"ERROR:"</code> solo como codificación de cara al modelo en <code>WebToolRuntime.call</code>.</p>
+  </div>
+
+  <h2 id="memory">Bugs: memoria</h2>
+
+  <div class="finding"><header><span class="chip crit">crítico</span><h3>R-M1 · La cacheabilidad del bloque de memoria es falsa: pagas el prefix entero casi cada turno</h3></header>
+    <span class="loc">memory-retrieval.js:48-63 · discord-bot.js:550-559</span>
+    <p>El comentario y el README prometen un bloque estable entre turnos, pero <code>orderMemories</code> tierea por <code>speakerUserId</code> y <code>presentUserIds</code>, ambos derivados del mensaje actual: los bytes cambian al cambiar de hablante o al rotar la ventana, y el breakpoint de caché colapsa al system prompt. El mayor contribuidor al coste percibido. El test existente compara dos llamadas con opciones idénticas, así que no lo pilla.</p>
+    <p class="fix"><b>Fix:</b> partir en <b>core estable</b> (orden recencia→significancia→id, idéntico para todos, en la posición cacheable) + <b>focus tail</b> pequeño (~1.5k chars) al final de la conversación con lo específico del hablante. Test de regresión: mismo core para speakers distintos.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip crit">crítico</span><h3>R-M2 · El opt-out solo se aplica al hablante: las notas <em>sobre</em> el usuario opted-out siguen inyectándose</h3></header>
+    <span class="loc">memory-retrieval.js:105</span>
+    <p>"I will not store or recall anything about you" — pero cuando habla otro, las notas sobre quien se dio de baja entran en cada prompt. El test actual codifica el comportamiento roto.</p>
+    <p class="fix"><b>Fix:</b> filtrar candidatos por <code>!store.isOptedOut(record.subject.userId)</code>; ídem en <code>list_all</code>. Mantener <code>list/export/forget</code> sin filtrar (derechos del propio usuario).</p>
+  </div>
+
+  <div class="finding"><header><span class="chip crit">crítico</span><h3>R-M3 · <code>list</code> y <code>export</code> publican notas owner-private y cross-guild en el canal donde se teclean</h3></header>
+    <span class="loc">memory-commands.js:110-120, 149-155 · discord-bot.js:976-997</span>
+    <p>Sin filtro <code>isReadable</code> ni de guild; <code>export</code> adjunta el JSON completo como reply pública. Una nota "remember privately:" acaba impresa en el canal general semanas después.</p>
+    <p class="fix"><b>Fix:</b> <code>list</code> redactado por destino (o vía <code>sendDiscreetResponse</code>); <code>export</code> siempre por DM con fallback que no adjunta el fichero.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip med">medio</span><h3>R-M4 · La retención nunca se barre tras el arranque y la compactación re-persiste registros caducados</h3></header>
+    <span class="loc">memory-store.js:80, 288-302</span>
+    <p><code>sweep()</code> solo corre en <code>load()</code>: un bot supervisado que no reinicia guarda en disco meses de datos que la política dice borrados a los 90 días, y los caducados invisibles siguen contando contra los caps, desalojando notas vivas.</p>
+    <p class="fix"><b>Fix:</b> filtrar caducados en <code>#compact</code> + timer periódico (<code>memory.retentionSweepHours</code>, default 6) con unref y limpieza en shutdown.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip med">medio</span><h3>R-M5 · La evicción ordena significancia antes que recencia: borra la corrección y conserva la alarma obsoleta</h3></header>
+    <span class="loc">memory-store.js:252-268</span>
+    <p>Exactamente la inversión que acabamos de arreglar en retrieval, pero aquí el resultado es <em>borrado permanente</em>: al llegar al cap, "G's PC is broken" (sig 5) sobrevive y "ya lo arregló" (sig 2) muere. Además cuenta registros supersedidos/caducados para los slots.</p>
+    <p class="fix"><b>Fix:</b> desalojar primero muertos, luego ordenar vivos por recencia; test espejo del caso G's PC.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip med">medio</span><h3>R-M6 · <code>load()</code> acepta cualquier objeto con <code>id</code>: una línea malformada rompe todos los turnos</h3></header>
+    <span class="loc">memory-store.js:73-91</span>
+    <p>El try solo cubre el parse; un <code>{"op":"put","record":{"id":"x"}}</code> carga y luego <code>active()</code> lanza TypeError en cada mensaje, tumbando <code>buildContext</code> para todo el bot, con <code>skipped: 0</code> en el log.</p>
+    <p class="fix"><b>Fix:</b> validador de forma en <code>#apply</code> que cuenta rechazos en <code>skipped</code>.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip med">medio</span><h3>R-M7 · <code>forget</code> sobre una corrección entierra a su predecesora para siempre</h3></header>
+    <span class="loc">memory-store.js:194-202, 121</span>
+    <p>Borrar la nota más nueva de una cadena no limpia <code>supersededBy</code> del padre: la nota antigua (verdadera) queda invisible ocupando cap y disco, y la compactación re-serializa el puntero colgante. Crítico una vez exista supersesión (F-M abajo).</p>
+    <p class="fix"><b>Fix:</b> resucitar al padre en <code>forget</code> + pase defensivo en <code>load()</code> para punteros a ids inexistentes.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip low">bajo</span><h3>R-M8 · <code>displayName</code> esquiva la sanitización anti-forjado del bloque</h3></header>
+    <span class="loc">memory-store.js:160 · memory-retrieval.js:96-97</span>
+    <p>El nick de guild (controlado por cualquier miembro) se renderiza en el bloque sin neutralizar corchetes ni acotar longitud — el agujero exacto que <code>sanitizeMemoryText</code> existe para cerrar. Severidad capada porque Discord no permite saltos de línea en nicks.</p>
+    <p class="fix"><b>Fix:</b> <code>sanitizeMemoryText(displayName, 64)</code> al guardar + render defensivo.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip low">bajo</span><h3>R-M9 · Usuarios bloqueados: fuera del transcript, dentro del bloque de memoria</h3></header>
+    <span class="loc">discord-bot.js:569 vs 550-559</span>
+    <p>Bloqueas a un acosador y sus mensajes desaparecen del contexto — pero las notas capturadas antes del bloqueo se inyectan indefinidamente y JJ lo sigue sacando en conversación.</p>
+    <p class="fix"><b>Fix:</b> mover el check de bloqueado dentro de <code>MemoryDigester.observe</code> y filtrar candidatos del bloque (guardando <code>subject.username</code> en el registro).</p>
+  </div>
+
+  <div class="finding"><header><span class="chip low">bajo</span><h3>R-M10 · El opt-out no purga los mensajes ya buferizados para digestión</h3></header>
+    <span class="loc">memory-digest.js:126-158</span>
+    <p>"memory off" y sus mensajes previos siguen en el buffer hasta 10 min, y se envían al proveedor de extracción tras retirar el consentimiento.</p>
+    <p class="fix"><b>Fix:</b> <code>forgetParticipant(userId)</code> en el digester, llamado desde el camino de consentimiento.</p>
+  </div>
+
+  <h2 id="refactors">Refactors de deduplicación</h2>
+
+  <div class="finding"><header><span class="chip ref">refactor</span><h3>F-1 · <code>boundedFetch</code>: 9 copias del patrón AbortController+setTimeout+fetch+status-check</h3></header>
+    <span class="loc">model-client, image-generation ×2, audio-mode, x-tools ×2, web-tools ×3, vision, scripts/model-catalog</span>
+    <p>Un helper único con <code>{timeoutMs, maxBytes, redirect, label}</code> colapsa ~150 líneas y hace <em>estructuralmente imposibles</em> R-N1 (timeout ausente), R-N4 (redirect), R-N8 (buffering) y el stampeo de <code>error.status</code> (R-N6) de una vez. El refactor con mejor ratio esfuerzo/beneficio de toda la lista.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip ref">refactor</span><h3>F-2 · <code>atomic-json.js</code>: 4-5 variantes de escritura atómica JSON</h3></header>
+    <span class="loc">participation-policy:141 · behavior-mode:105 · discord-scopes:102 · chat-relay:45 (+memory-store)</span>
+    <p>Tres copias byte-idénticas más una reducida; extraer <code>writeJsonAtomically(path, value, {backup})</code> + <code>readJsonObject</code>. El relay gana gratis el backup/restore que hoy no tiene.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip ref">refactor</span><h3>F-3 · <code>identityGate</code>: 10 copias del check id+username</h3></header>
+    <span class="loc">discord-bot ×6 · memory-commands:73 · participation-policy:204 · inline discord-bot:971</span>
+    <p>Factory <code>identityGate("webAllowedUserIds","webAllowedUsernames")</code>: mismas firmas exportadas, −40 líneas, y deja a la vista el hueco del deny-list (F-9).</p>
+  </div>
+
+  <div class="finding"><header><span class="chip ref">refactor</span><h3>F-4 · <code>buildContext</code> con options object (hoy 11 parámetros posicionales)</h3></header>
+    <span class="loc">discord-bot.js:523-535 y 5 call sites</span>
+    <p>Call sites con <code>false, false, false</code> ilegibles; con objeto, los handoffs quedan en <code>buildContext(msg, client, config, prompt, {audioModeEnabled})</code>.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip ref">refactor</span><h3>F-5 · Tabla de handlers para el dispatch de 200 líneas + logs de gate unificados</h3></header>
+    <span class="loc">discord-bot.js:1181-1386, 1046-1070</span>
+    <p>Nueve branches if/else-if mezclando autorización, ejecución y chat por defecto; un array <code>COMMAND_HANDLERS</code> con <code>matches/authorized/denial/run</code> hace R-C1 estructuralmente imposible y colapsa los 5 logs de gate copy-paste en un bucle.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip ref">refactor</span><h3>F-6 · Un <code>Prefetcher</code> genérico para web y X</h3></header>
+    <span class="loc">web-tools.js:280-316 · x-tools.js:394-417</span>
+    <p>Mismo algoritmo (extraer → Promise.all → sniff → "(not downloaded)" → join → clamp) con extractor/fetcher/etiqueta distintos. Unificar arregla R-N10 en un solo sitio.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip ref">refactor</span><h3>F-7 · Tabla <code>PROVIDERS</code> en model-client</h3></header>
+    <span class="loc">model-client.js:365-458, 460-514</span>
+    <p><code>providerRequest</code> y <code>normalizeResponse</code> son dos escaleras if paralelas que deben mantenerse en sync a mano; una tabla <code>{buildBody, headers, normalize}</code> hace el pareo estructural — y habría hecho evidente que al branch OpenAI le falta el <code>visibleText</code> (R-N9).</p>
+  </div>
+
+  <div class="finding"><header><span class="chip ref">refactor</span><h3>F-8 · Lector de config compartido entre procesos — con bug de divergencia real</h3></header>
+    <span class="loc">config.js:20-62 vs mcp-control-index.js:26-67</span>
+    <p>Los helpers están duplicados y <em>ya han divergido con consecuencias</em>: el bot siembra <code>ownerUserIds</code> con fallback desde otras listas (config.js:497-503) y el proceso de control no — <code>send_owner_dm</code> resuelve un owner distinto según qué proceso atiende. Extraer <code>createConfigReader()</code> a config-source.js. Documentar también qué claves son env-only (<code>integer()/enabled()</code> no leen config.json).</p>
+  </div>
+
+  <div class="finding"><header><span class="chip ref">refactor</span><h3>F-9 · Misceláneos con drift demostrado</h3></header>
+    <span class="loc">varios</span>
+    <p>(a) <code>clampText</code>/<code>collapseWhitespace</code> únicos — hoy 4 helpers de truncado con 2 formatos distintos que el modelo ve mezclados. (b) <code>resolvePolicy()</code> unificado para el ternario <code>behaviorModeController?.enabled ? scoped : global</code> copiado en 3 consumidores. (c) <code>recordTokens()</code> compartido + <code>findByQuery</code> rankeado por <code>lexicalSimilarity</code> (hoy "forget" matchea todo con una palabra común). (d) <code>requireSubsystem()</code> para ~40 guards idénticos en mcp-control-server + hoisting del bloque <code>createMcpServer({...})</code> triplicado. (e) Campos muertos en cada registro de memoria (<code>validFrom</code>, <code>embedding</code>, <code>useCount</code>): quitarlos o darles uso real.</p>
+  </div>
+
+  <h2 id="features">Mejoras y features</h2>
+
+  <div class="finding"><header><span class="chip ref">feature</span><h3>M-1 · Supersesión de memoria extractor-driven (las "phantom contradictions" de Verochka)</h3></header>
+    <span class="loc">memory-digest.js:4-13, 233-247 · memory-store.js:140-192</span>
+    <p>El store implementa supersesión completa (<code>supersedes</code>, <code>supersededBy</code>, <code>history()</code>) y <b>ningún código de producción la invoca</b>. Propuesta en 4 partes: (1) el extractor recibe las notas vivas del roster y puede devolver <code>replaces: &lt;id corto&gt;</code> cuando un hecho nuevo invalida uno viejo; (2) validación dura del id (mismo sujeto, mismo guild, vivo); (3) pasarlo a <code>remember({supersedes})</code>, y usar la banda 0.55–0.8 de similitud para supersedir en vez de saltar; (4) comando de owner "corrige: …". Sin migración. Es el único mecanismo del diseño que hace que el bloque <em>encoja</em>. Requiere R-M7 primero o la primera corrección mala es irrecuperable.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip ref">feature</span><h3>M-2 · Coste del bloque: relevancia en el focus tail + presupuestos por sujeto + dedupe menos estricto</h3></header>
+    <span class="loc">memory-retrieval.js:18-28, 68, 102-112 · memory-digest.js:260-265</span>
+    <p><code>lexicalSimilarity</code> existe, está testeada, y no se usa en el camino que cuesta dinero. Con el split de R-M1: rankear el focus tail por similitud con el mensaje actual (floor ~0.12, con el fix del tokenizador que hoy pierde tokens de &lt;3 chars: "pc", "db", "4o"); <code>perSubjectMaxItems</code> (6) para que un usuario chatarra no monopolice el bloque; bajar el umbral de duplicado en captura de 0.8 → 0.55 configurable; alinear los defaults divergentes (lib 200/40k vs config 60/12k) y bajar el max de config de 400k a 60k. Nota: el default real de producción es 12k chars, no 40k — confirmar el .env del deploy antes de tunear a ciegas.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip ref">feature</span><h3>M-3 · Circuit breaker + Retry-After + jitter</h3></header>
+    <span class="loc">retry.js · model-client.js:241-256</span>
+    <p>El breaker (petición explícita de Verochka en el chat): contador de fallos de transporte por <code>provider:model</code>; superado el umbral, saltar directo al fallback durante la ventana de cooldown — hoy un primario caído cuesta 2×120 s por turno antes de intentar el fallback. Retry-After: stampear <code>error.retryAfterMs</code> del header y preferirlo en el cálculo de delay (Anthropic y OpenAI lo envían). Jitter: <code>jitterMs: 250</code> en los 4 call sites — la maquinaria y el test ya existen, nadie los usa.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip ref">feature</span><h3>M-4 · Superficie MCP relay-only (ítem 1 de hardening del doc — verificado sin implementar)</h3></header>
+    <span class="loc">mcp-control-server.js:132-508, 1369-1374</span>
+    <p>El bearer del worker de ChatGPT hoy lleva autoridad admin completa (~40 tools, incluidos <code>send_owner_dm</code> y <code>restart_runtime</code>). Propuesta: <code>MCP_CONTROL_RELAY_TOKEN</code> + campo <code>surface: "relay"|"admin"|"discovery"</code> en el catálogo + registro condicionado por credencial. Sin endpoints nuevos.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip ref">feature</span><h3>M-5 · Guard de contenido saliente (ítem 3 del doc) y extensión con inyección on-demand (ítem 5)</h3></header>
+    <span class="loc">chat-relay.js:293-295 · extensions/chat-relay-wake/manifest.json:16-34</span>
+    <p>Nada inspecciona el contenido saliente hoy (solo longitud). <code>outbound-guard.js</code> con patrones de tokens Discord/API keys/PEM + canaries del operador, acción block/redact/warn, llamado en <code>submit</code> y en las dos tools de envío; audita la regla, nunca el cuerpo. La extensión: sustituir el content script estático en todo chatgpt.com por <code>chrome.scripting.executeScript</code> solo sobre la pestaña del task configurado, y acotar <code>optional_host_permissions</code>.</p>
+  </div>
+
+  <div class="finding"><header><span class="chip ref">feature</span><h3>M-6 · Menores con justificación de una línea</h3></header>
+    <span class="loc">varios</span>
+    <p>(a) <code>blockedUserIds</code>: el único deny-list del sistema es por username, evadible con un rename. (b) Parsers de capacidades anclados como runtime-control — hoy "should I enable audio mode?" de un autorizado <em>cambia el estado</em>. (c) <code>visionTimeoutMs</code> no acota la inferencia que aparenta acotar (solo las descargas): plumbear AbortSignal o renombrar. (d) codex-runner: <code>child.kill()</code> no mata el árbol en Windows mientras <code>busy</code> ya se liberó, y el concat de Buffers corrompe multi-byte partido — <code>setEncoding("utf8")</code>. (e) Corregir 4 afirmaciones del README que el código contradice (cacheabilidad, "nothing about them is recalled", "retention on every write", orden significancia/recencia).</p>
+  </div>
+
+  <h2 id="orden">Orden de ataque sugerido</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Tanda</th><th>Contenido</th><th>Racional</th></tr></thead>
+    <tbody>
+      <tr><td class="num">1</td><td>Quick wins de una línea o casi: R-C2, R-C3, R-M2, R-I3, R-I7, R-N3, R-C1</td><td>Máximo impacto/esfuerzo; ninguno toca arquitectura.</td></tr>
+      <tr><td class="num">2</td><td>F-1 <code>boundedFetch</code> y migrar los 9 call sites; de paso caen R-N1, R-N4, R-N6, R-N8</td><td>El refactor paga cuatro bugs de golpe con una sola suite de tests.</td></tr>
+      <tr><td class="num">3</td><td>Fiabilidad del relay: R-I1, R-I4, R-I10, R-I11, R-I9, R-C6 + R-I2 (lockfile)</td><td>Es la ruta de producción real de JJ con MODEL_PROVIDER=none.</td></tr>
+      <tr><td class="num">4</td><td>Memoria: R-M1 (core+focus) → M-2 (relevancia/presupuestos) → R-M7 → M-1 (supersesión) → R-M3, R-M4, R-M5</td><td>El split de caché primero: cambia la distribución de tamaño de la que dependen los tunings.</td></tr>
+      <tr><td class="num">5</td><td>Fallback/retry: R-N2, R-N7, M-3 (breaker + Retry-After + jitter)</td><td>Comparten predicado: el gate del fallback y el breaker son la misma clasificación.</td></tr>
+      <tr><td class="num">6</td><td>MCP/seguridad: R-I6, R-I12, M-4, M-5 + shutdown R-I5</td><td>Hardening del doc, ahora con forma concreta.</td></tr>
+      <tr><td class="num">7</td><td>Resto de refactors (F-2…F-9) y menores (M-6), portando cada tanda a selta</td><td>Higiene con el terreno ya despejado.</td></tr>
+    </tbody>
+  </table></div>
+
+  <p class="note"><b>Verificado y descartado</b> por los agentes (para que no lo re-investiguemos): IPs decimales/hex en el allowlist de imágenes (la URL de Node las normaliza y el regex las caza); corrupción de estado de conversación en el fallback (converse copia los mensajes); el fetcher de attachments del relay (host allowlist + redirect:error + streaming cap — sólido); inyección de argumentos en codex-runner (argv fijo, shell:false); precedencia de config-source; rotación del request-logger.</p>
+</main>
+</body>
+</html>

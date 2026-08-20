@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { NanoGptImageClient } from "../src/image-generation.js";
+import { NanoGptImageClient, isSafeHostedImageUrl } from "../src/image-generation.js";
+
+test("hosted image URL safety rejects IPv6 literals and internal IPv4", () => {
+  assert.equal(isSafeHostedImageUrl("https://cdn.example.com/a.png"), true);
+  assert.equal(isSafeHostedImageUrl("https://[::1]/a.png"), false);
+  assert.equal(isSafeHostedImageUrl("https://[::ffff:127.0.0.1]/a.png"), false);
+  assert.equal(isSafeHostedImageUrl("https://[fd00::1]/a.png"), false);
+  assert.equal(isSafeHostedImageUrl("https://127.0.0.1/a.png"), false);
+  assert.equal(isSafeHostedImageUrl("https://169.254.169.254/latest"), false);
+  assert.equal(isSafeHostedImageUrl("http://cdn.example.com/a.png"), false);
+});
 
 function imageConfig(overrides = {}) {
   return {

@@ -688,9 +688,11 @@ async function sendResponse(
       return;
     } catch (error) {
       logger.error("Failed to generate ElevenLabs audio", error);
+      // Prepend the notice instead of replacing: the model answer is already
+      // paid for, so the room must still receive it when TTS falls back to text.
       content =
-        "*JJ taps the microphone twice.* Audio generation failed, so I have fallen back to text. " +
-        "The error has been logged.";
+        "*JJ taps the microphone twice.* Audio generation failed, so this is text.\n\n" +
+        content;
     }
   }
   const chunks = splitDiscordMessage(content);
@@ -1023,9 +1025,13 @@ export function createDiscordBot({
     const participationReservationId = admission.reservationId;
     const webRequested = requestsWebTools(message.content);
     const escalationRequest = parseEscalationCommand(message.content);
-    const codexRequest = parseCodexDelegation(message.content);
-    const audioModeCommand = parseAudioModeCommand(message.content);
-    const imageRequest = parseImageGenerationCommand(message.content);
+    // Capability commands only exist on a directed turn. Parsing them on a
+    // spontaneous turn makes the owner-only refusal branches fire unprompted
+    // (e.g. volunteering "image generation is owner-only" at a message that
+    // merely mentioned drawing), so a spontaneous turn must see them as absent.
+    const codexRequest = directResponse ? parseCodexDelegation(message.content) : null;
+    const audioModeCommand = directResponse ? parseAudioModeCommand(message.content) : null;
+    const imageRequest = directResponse ? parseImageGenerationCommand(message.content) : null;
     const webIdentityAuthorized = isWebAuthorized(message.author, config);
     const escalationIdentityAuthorized = isEscalationAuthorized(message.author, config);
     const codexIdentityAuthorized = isCodexAuthorized(message.author, config);
@@ -1077,6 +1083,10 @@ export function createDiscordBot({
       .catch(() => undefined)
       .then(async () => {
         let participationCommitted = false;
+        // Set the moment the first message reaches Discord, so a failure in the
+        // post-delivery bookkeeping does not send a contradictory "something failed"
+        // apology on top of an answer the room already received.
+        let delivered = false;
         // Channel queues serialize turns and inference takes seconds, so maintenance
         // can be enabled from another channel after this turn was admitted. Re-check
         // before spending inference and again before speaking.
@@ -1227,6 +1237,7 @@ export function createDiscordBot({
               });
               if (maintenanceSilenced()) return;
               await sendImageResponse(message, generation);
+              delivered = true;
               logger.info(
                 `Image generation complete model=${generation.model} promptChars=${generation.prompt.length} images=${generation.images.length}`,
               );
@@ -1359,17 +1370,30 @@ export function createDiscordBot({
                 spontaneous,
                 audioEnabled: audioResponseEnabled,
                 onReply: async (reply) => {
-                  if (maintenanceSilenced()) return;
+                  // Maintenance turned on while the item was outstanding: drop the
+                  // reply, but release the reservation or it leaks against the
+                  // guild budget for the process lifetime.
+                  if (maintenanceSilenced()) {
+                    participationController?.cancel(participationReservationId);
+                    return;
+                  }
                   await sendResponse(message, reply.slice(0, DISCORD_MESSAGE_LIMIT * 10), {
                     reply: !spontaneous,
                     audioEnabled: audioResponseEnabled,
                     elevenLabs,
                     logger,
                   });
-                  await participationController?.commit(participationReservationId);
-                  if (spontaneous) {
-                    behaviorModeController?.recordAutoResponse?.(messageScope(message));
-                    spontaneousGate.recordResponse(message.channelId);
+                  // Bookkeeping after the Discord send must never throw back into
+                  // the relay: a throw there is read as delivery failure and the
+                  // same answer is redelivered by the next worker.
+                  try {
+                    await participationController?.commit(participationReservationId);
+                    if (spontaneous) {
+                      behaviorModeController?.recordAutoResponse?.(messageScope(message));
+                      spontaneousGate.recordResponse(message.channelId);
+                    }
+                  } catch (error) {
+                    logger.error("Relay reply bookkeeping failed after delivery", error);
                   }
                 },
                 onDismiss: async () => {
@@ -1396,13 +1420,16 @@ export function createDiscordBot({
             elevenLabs,
             logger,
           });
+          delivered = true;
           await participationController?.commit(participationReservationId);
           participationCommitted = true;
           spontaneousGate.recordResponse(message.channelId);
         } catch (error) {
           if (!participationCommitted) participationController?.cancel(participationReservationId);
           logger.error("Failed to answer Discord message", error);
-          if (maintenanceSilenced()) return;
+          // If the answer already reached the room, the failure is in post-send
+          // bookkeeping — do not contradict it with an error message.
+          if (delivered || maintenanceSilenced()) return;
           await sendResponse(
             message,
             "[sighs] Something failed while contacting the model. Please try again in a moment. The error has been logged.",

@@ -307,18 +307,24 @@ export class ModelClient {
         throw new Error(`${providerLabel(route.provider)} exceeded ${maxIterations} tool iterations`);
       }
 
+      // Mint a stable id on the tool call itself before pushing, so the assistant
+      // message and its tool result reference the same id. A provider that omitted
+      // `id` otherwise gets a mismatched pair the next request rejects with 400.
+      for (const [index, toolCall] of toolCalls.entries()) {
+        if (!toolCall.id) toolCall.id = `tool_${toolIterations}_${index}`;
+      }
       conversation.push({
         role: "assistant",
         content: message.content || null,
         tool_calls: toolCalls,
       });
-      for (const [index, toolCall] of toolCalls.entries()) {
+      for (const toolCall of toolCalls) {
         const name = toolCall?.function?.name || "";
         const args = toolCall?.function?.arguments || "{}";
         const result = await activeToolRuntime.call(name, args);
         conversation.push({
           role: "tool",
-          tool_call_id: toolCall.id || `tool_${toolIterations}_${index}`,
+          tool_call_id: toolCall.id,
           name,
           content: result,
         });

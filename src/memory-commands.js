@@ -122,7 +122,11 @@ export async function executeMemoryCommand(command, store, context) {
   if (command.action === "list_all") {
     const readable = store
       .active()
-      .filter((record) => isReadable(record, { guildId, channelId, ownerTurn: context.isOwner === true }))
+      .filter(
+        (record) =>
+          !store.isOptedOut(record.subject.userId) &&
+          isReadable(record, { guildId, channelId, ownerTurn: context.isOwner === true }),
+      )
       .sort(
         (a, b) =>
           a.subject.displayName.localeCompare(b.subject.displayName) ||
