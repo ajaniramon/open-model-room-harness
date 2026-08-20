@@ -344,3 +344,81 @@ test("requeues a claimed item after its lease expires", async () => {
   assert.equal(queue.pending()[0].status, "pending");
   assert.equal(queue.wakeStatus().oldestActiveId, claimed[0].id);
 });
+
+test("a stalled worker's repeated claims never burn the delivery budget", async () => {
+  const dismissed = [];
+  const queue = new ChatRelayQueue({
+    enabled: true,
+    maxAttempts: 3,
+    maxClaims: 4,
+    leaseSeconds: 10,
+    now: (() => {
+      let t = 1_000_000;
+      return () => (t += 11_000); // each call advances past the lease so claims re-lease
+    })(),
+    deliveryHandlers: { onDismiss: (item, reason) => dismissed.push([item.messageId, reason]) },
+  });
+  const id = queue.enqueue({ message: message(), context: [] });
+
+  // Claim over and over without ever submitting: the lease expires between claims.
+  for (let i = 0; i < 4; i += 1) await queue.claim({ workerId: "stalled" });
+  // The delivery budget is untouched — a real delivery attempt still has all 3.
+  const item = queue.get(id);
+  assert.equal(item?.attempts ?? 0, 0, "claims must not increment delivery attempts");
+
+  // The next claim finds it claim-exhausted and dismisses it instead of re-leasing.
+  const claimed = await queue.claim({ workerId: "stalled" });
+  assert.deepEqual(claimed, []);
+  assert.deepEqual(dismissed, [["m1", "claim_exhausted"]]);
+});
+
+test("context is filled newest-first so the turns before the trigger survive", async () => {
+  // maxContextChars floors at 500; three 300-char turns (900) force truncation.
+  const queue = new ChatRelayQueue({ enabled: true, maxContextChars: 500 });
+  const id = queue.enqueue({
+    message: message(),
+    context: [
+      { role: "user", content: "A".repeat(300) }, // oldest — should be dropped
+      { role: "user", content: "B".repeat(300) },
+      { role: "user", content: "C".repeat(300) }, // newest — must be kept
+    ],
+  });
+  const item = queue.get(id);
+  const joined = item.context.map((m) => m.content).join("|");
+  assert.match(joined, /C{300}/, "the newest turn is present in full");
+  assert.doesNotMatch(joined, /A{300}/, "the oldest full turn was clipped or dropped");
+  assert.ok(joined.startsWith("A") || joined.startsWith("B"), "chronological order is restored");
+  assert.ok(joined.lastIndexOf("C") > joined.indexOf("B"), "newest turn comes last");
+  assert.equal(item.contextTruncated, true);
+});
+
+test("dedupes a redelivered message id even after the item was delivered", async () => {
+  const queue = new ChatRelayQueue({ enabled: true });
+  const first = queue.enqueue({ message: message({ id: "dup" }), context: [], onReply: async () => {} });
+  await queue.submit(first, "answer");
+  assert.equal(queue.size, 0);
+  // The gateway redelivers the same event after the item is gone.
+  const second = queue.enqueue({ message: message({ id: "dup" }), context: [], onReply: async () => {} });
+  assert.equal(second, null, "a recently delivered message id is not re-enqueued");
+  assert.equal(queue.size, 0);
+});
+
+test("dedupes a redelivery against a leased item across a restart", async () => {
+  const root = await mkdtemp(join(tmpdir(), "chat-relay-dup-"));
+  const statePath = join(root, "chat-relay.json");
+  try {
+    const first = new ChatRelayQueue({ enabled: true, statePath });
+    const id = first.enqueue({ message: message({ id: "restart-dup" }), context: [] });
+    await first.claim({ workerId: "w" }); // now leased
+    await first.flush();
+
+    const second = new ChatRelayQueue({ enabled: true, statePath });
+    await second.load(); // restores it as pending
+    // A redelivery of the same event arrives after restart.
+    const again = second.enqueue({ message: message({ id: "restart-dup" }), context: [] });
+    assert.equal(again, id, "the redelivery maps to the restored item, not a new one");
+    assert.equal(second.size, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

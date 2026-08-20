@@ -8,17 +8,27 @@ function createRelayId() {
 }
 
 function compactContext(messages, maxChars) {
+  // Fill the budget newest-first so the turns immediately before the trigger are
+  // guaranteed present; the oldest of the window is what gets clipped, not the
+  // most recent. The kept slice is then restored to chronological order.
+  const window = messages.slice(-20);
   const shaped = [];
   let total = 0;
-  for (const message of messages.slice(-20)) {
-    const content = String(message.content || "");
+  let dropped = false;
+  for (let i = window.length - 1; i >= 0; i -= 1) {
+    const content = String(window[i].content || "");
     const remaining = Math.max(0, maxChars - total);
-    if (!remaining) break;
+    if (!remaining) {
+      dropped = true;
+      break;
+    }
     const clipped = content.length > remaining ? `${content.slice(0, remaining - 1)}…` : content;
-    shaped.push({ role: message.role, content: clipped });
+    shaped.push({ role: window[i].role, content: clipped });
     total += clipped.length;
+    if (clipped.length < content.length) dropped = true;
   }
-  return shaped;
+  shaped.reverse();
+  return { context: shaped, truncated: dropped };
 }
 
 function compactReplyTo(replyTo) {
@@ -67,6 +77,7 @@ export class ChatRelayQueue {
     maxContextChars = 12_000,
     leaseSeconds = 120,
     maxAttempts = 3,
+    maxClaims = 10,
     maxImageAttachments = 4,
     maxAttachmentBytes = 8_000_000,
     now = Date.now,
@@ -82,6 +93,10 @@ export class ChatRelayQueue {
     this.maxContextChars = Math.max(500, Math.min(Number(maxContextChars) || 12_000, 100_000));
     this.leaseSeconds = Math.max(10, Math.min(Number(leaseSeconds) || 120, 3_600));
     this.maxAttempts = Math.max(1, Math.min(Number(maxAttempts) || 3, 20));
+    // A stalled worker that claims and never submits must not exhaust the delivery
+    // budget: claims and delivery attempts are counted separately, and a claim cap
+    // stops one dead worker from hoarding an item until TTL.
+    this.maxClaims = Math.max(this.maxAttempts, Math.min(Number(maxClaims) || 10, 100));
     const requestedImageLimit = Number(maxImageAttachments);
     this.maxImageAttachments = Math.max(0, Math.min(Number.isFinite(requestedImageLimit) ? requestedImageLimit : 4, 10));
     this.maxAttachmentBytes = Math.max(1_024, Math.min(Number(maxAttachmentBytes) || 8_000_000, 20_000_000));
@@ -90,28 +105,56 @@ export class ChatRelayQueue {
     this.setTimer = setTimer;
     this.clearTimer = clearTimer;
     this.items = new Map();
+    // Bounded ring of recently enqueued Discord message ids, so a redelivered
+    // gateway event is deduplicated even after its item was delivered and removed.
+    this.recentMessageIds = new Set();
+    this.recentMessageOrder = [];
     this.persisting = Promise.resolve();
     this.deliveryHandlers = deliveryHandlers || {};
+  }
+
+  #rememberMessageId(messageId) {
+    if (!messageId || this.recentMessageIds.has(messageId)) return;
+    this.recentMessageIds.add(messageId);
+    this.recentMessageOrder.push(messageId);
+    while (this.recentMessageOrder.length > 500) {
+      this.recentMessageIds.delete(this.recentMessageOrder.shift());
+    }
   }
 
   async load() {
     if (!this.enabled || !this.statePath) return this;
     try {
       const payload = JSON.parse(await readFile(this.statePath, "utf8"));
+      for (const messageId of Array.isArray(payload.recentMessageIds) ? payload.recentMessageIds : []) {
+        this.#rememberMessageId(String(messageId || "") || null);
+      }
       for (const raw of Array.isArray(payload.items) ? payload.items : []) {
         if (!raw?.id || !raw.expiresAt || Date.parse(raw.expiresAt) <= this.now()) continue;
         if (!["pending", "leased"].includes(raw.status || "pending")) continue;
         // A process restart invalidates in-flight ownership. Requeue rather than
         // leaving the item stuck behind a worker that no longer exists.
-        this.items.set(raw.id, {
+        const item = {
           ...raw,
           status: "pending",
+          claims: Number(raw.claims) || 0,
+          deliveryAttempts: Number(raw.deliveryAttempts) || 0,
           leaseToken: null,
           leaseUntil: null,
           imageAttachments: Array.isArray(raw.imageAttachments) ? raw.imageAttachments.slice(0, this.maxImageAttachments) : [],
           onReply: null,
           onDismiss: null,
-        });
+        };
+        this.items.set(raw.id, item);
+        this.#rememberMessageId(item.messageId || null);
+        // Reschedule the TTL timer the persisted state cannot carry, so restored
+        // items still expire (and release their reservation) without waiting for
+        // an unrelated queue call to run a sweep.
+        item.expiryTimer = this.setTimer(
+          () => void this.#expire(item),
+          Math.max(1_000, Date.parse(item.expiresAt) - this.now()),
+        );
+        item.expiryTimer?.unref?.();
       }
       this.sweep();
       await this.#persist();
@@ -161,10 +204,20 @@ export class ChatRelayQueue {
   }) {
     if (!this.enabled) return null;
     this.sweep();
+    const incomingMessageId = message.id || null;
+    // Dedupe against every active item, not just pending ones: after a restart the
+    // gateway can redeliver an event whose item is already leased to a worker, and
+    // matching only "pending" would enqueue a second item and answer twice. The
+    // recent-id ring covers the window where the item was already delivered and
+    // removed but the redelivery is still arriving.
     const duplicate = [...this.items.values()].find(
-      (item) => item.messageId && item.messageId === (message.id || null) && item.status === "pending",
+      (item) =>
+        item.messageId &&
+        item.messageId === incomingMessageId &&
+        ["pending", "leased"].includes(item.status),
     );
     if (duplicate) return duplicate.id;
+    if (incomingMessageId && this.recentMessageIds.has(incomingMessageId)) return null;
     const id = createRelayId();
     const createdAtMs = this.now();
     const item = {
@@ -172,7 +225,8 @@ export class ChatRelayQueue {
       createdAt: new Date(createdAtMs).toISOString(),
       expiresAt: new Date(createdAtMs + this.ttlMs).toISOString(),
       status: "pending",
-      attempts: 0,
+      claims: 0,
+      deliveryAttempts: 0,
       leaseToken: null,
       leaseUntil: null,
       kind,
@@ -198,11 +252,15 @@ export class ChatRelayQueue {
       triggerText: String(message.content || "").slice(0, 2_000),
       replyTo: compactReplyTo(replyTo),
       imageAttachments: collectRelayImageAttachments(message, this.maxImageAttachments),
-      context: compactContext(context || [], this.maxContextChars),
+      ...(() => {
+        const { context: shaped, truncated } = compactContext(context || [], this.maxContextChars);
+        return { context: shaped, contextTruncated: truncated };
+      })(),
       onReply,
       onDismiss,
     };
     this.items.set(id, item);
+    this.#rememberMessageId(incomingMessageId);
     item.expiryTimer = this.setTimer(() => {
       void this.#expire(item);
     }, this.ttlMs);
@@ -262,12 +320,25 @@ export class ChatRelayQueue {
     const duration = Math.max(10, Math.min(Number(leaseSeconds) || this.leaseSeconds, 3_600));
     const leaseUntil = new Date(this.now() + duration * 1_000).toISOString();
     const claimed = [];
-    for (const item of this.#activeItems().filter((candidate) => candidate.status === "pending").slice(0, count)) {
+    const exhausted = [];
+    for (const item of this.#activeItems().filter((candidate) => candidate.status === "pending")) {
+      if (claimed.length >= count) break;
+      // A pending item reclaimed maxClaims times without ever delivering is a
+      // stuck worker's leftover; dismiss it so its reservation is released now
+      // rather than at TTL, instead of leasing it out again.
+      if ((item.claims || 0) >= this.maxClaims) {
+        exhausted.push(item);
+        continue;
+      }
       item.status = "leased";
-      item.attempts += 1;
+      item.claims = (item.claims || 0) + 1;
       item.leaseToken = `${workerId}:${randomUUID()}`;
       item.leaseUntil = leaseUntil;
       claimed.push(this.#publicItem(item, { includeContext, includeLease: true }));
+    }
+    for (const item of exhausted) {
+      this.#remove(item);
+      await this.#notifyDismiss(item, "claim_exhausted");
     }
     await this.#persist();
     return claimed;
@@ -293,14 +364,15 @@ export class ChatRelayQueue {
     const content = String(reply || "").trim();
     if (!content) return { ok: false, error: "Reply must not be empty." };
     if (content.length > 8_000) return { ok: false, error: "Reply is too long." };
-    if (item.status === "pending") item.attempts += 1;
     this.#remove(item);
     try {
       if (typeof item.onReply === "function") await item.onReply(content);
       else if (typeof this.deliveryHandlers.onReply === "function") await this.deliveryHandlers.onReply(item, content);
       else throw new Error("Relay item has no reply handler.");
     } catch (error) {
-      if (item.attempts < this.maxAttempts) {
+      // Only a genuine delivery failure burns the delivery budget — never a claim.
+      item.deliveryAttempts = (item.deliveryAttempts || 0) + 1;
+      if (item.deliveryAttempts < this.maxAttempts) {
         item.status = "pending";
         item.leaseToken = null;
         item.leaseUntil = null;
@@ -385,7 +457,8 @@ export class ChatRelayQueue {
       createdAt: item.createdAt,
       expiresAt: item.expiresAt,
       status: item.status,
-      attempts: item.attempts,
+      attempts: item.deliveryAttempts || 0,
+      claims: item.claims || 0,
       leaseUntil: item.leaseUntil,
       ...(includeLease ? { leaseToken: item.leaseToken } : {}),
       kind: item.kind,
@@ -401,6 +474,7 @@ export class ChatRelayQueue {
       isDM: item.isDM,
       author: item.author,
       triggerText: item.triggerText,
+      contextTruncated: item.contextTruncated === true,
       replyTo: item.replyTo || null,
       workerContract: {
         relayItemId: item.id,
@@ -417,6 +491,7 @@ export class ChatRelayQueue {
     if (!this.statePath) return Promise.resolve();
     const snapshot = {
       items: [...this.items.values()].map(({ expiryTimer, onReply, onDismiss, ...item }) => item),
+      recentMessageIds: this.recentMessageOrder.slice(-500),
     };
     this.persisting = this.persisting
       .catch(() => undefined)

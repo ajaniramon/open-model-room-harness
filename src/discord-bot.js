@@ -828,10 +828,19 @@ export function createDiscordBot({
       const original = item.messageId && channel.messages?.fetch
         ? await channel.messages.fetch(item.messageId).catch(() => null)
         : null;
+      // Match the live delivery path: clamp to the same length bound and honour the
+      // item's audio flag, so a turn answered after a restart is not silently
+      // downgraded to unbounded text.
+      const clamped = content.slice(0, DISCORD_MESSAGE_LIMIT * 10);
+      const deliveryOptions = {
+        audioEnabled: item.audioEnabled === true,
+        elevenLabs,
+        logger,
+      };
       if (original?.reply) {
-        await sendResponse(original, content, { reply: true, logger });
+        await sendResponse(original, clamped, { reply: true, ...deliveryOptions });
       } else {
-        await sendResponse({ channel }, content, { reply: false, logger });
+        await sendResponse({ channel }, clamped, { reply: false, ...deliveryOptions });
       }
     },
   });

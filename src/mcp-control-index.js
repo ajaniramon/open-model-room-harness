@@ -248,6 +248,17 @@ const chatRelay = new ChatRelayQueue({
     { min: 1_024, max: 20_000_000 },
   ),
 });
+// This standalone control process has no Discord client, so it cannot deliver
+// relay replies and must never own the relay state file: two processes each
+// writing a full snapshot would clobber the bot's pending queue. Delivery-bearing
+// relay runs inside the bot process (npm start), which starts its own MCP server.
+if (chatRelay.enabled) {
+  throw new Error(
+    "chatRelay.enabled is set, but the standalone MCP control process cannot deliver " +
+      "relay replies. Run the relay inside the bot (npm start), or disable the relay for " +
+      "this process (CHAT_RELAY_ENABLED=false).",
+  );
+}
 await chatRelay.load();
 
 const server = startMcpControlServer({
