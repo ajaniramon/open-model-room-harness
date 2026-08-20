@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isRetryableRequestError, retry, RETRYABLE_HTTP_STATUS } from "../src/retry.js";
+import { isRetryableIdempotentError, isRetryableRequestError, retry, RETRYABLE_HTTP_STATUS } from "../src/retry.js";
 
 test("returns the first successful result without sleeping", async () => {
   const sleeps = [];
@@ -113,4 +113,33 @@ test("classifies throttling, server, timeout, and network failures as retryable"
   assert.equal(isRetryableRequestError(abort), true);
   assert.equal(isRetryableRequestError(new TypeError("fetch failed")), true);
   assert.equal(isRetryableRequestError(new Error("logic bug")), false);
+});
+
+test("a server Retry-After overrides the computed backoff", async () => {
+  const sleeps = [];
+  let calls = 0;
+  await retry(
+    async () => {
+      calls += 1;
+      if (calls === 1) {
+        const e = new Error("throttled");
+        e.status = 429;
+        e.retryAfterMs = 3_000;
+        throw e;
+      }
+      return "ok";
+    },
+    { attempts: 2, backoffMs: 700, sleep: async (ms) => sleeps.push(ms) },
+  );
+  assert.deepEqual(sleeps, [3_000], "waits the server-requested delay, not the 700ms backoff");
+});
+
+test("a client timeout is not retried on an idempotent-only path", () => {
+  const abort = new Error("timed out");
+  abort.name = "AbortError";
+  assert.equal(isRetryableIdempotentError(abort), false, "client timeouts are not replayed when paid");
+  const throttled = new Error("429");
+  throttled.status = 429;
+  assert.equal(isRetryableIdempotentError(throttled), true);
+  assert.equal(isRetryableIdempotentError(new TypeError("fetch failed")), true);
 });

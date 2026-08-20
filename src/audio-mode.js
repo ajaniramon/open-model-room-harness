@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { isRetryableRequestError, retry } from "./retry.js";
+import { isRetryableIdempotentError, retry } from "./retry.js";
 
 export function prepareSpeechText(text, maxChars = 1_200) {
   const speech = String(text || "").trim();
@@ -109,7 +109,7 @@ export class ElevenLabsTtsClient {
       {
         attempts: 2,
         backoffMs: 700,
-        shouldRetry: isRetryableRequestError,
+        shouldRetry: isRetryableIdempotentError,
         label: "ElevenLabs synthesis",
       },
     );

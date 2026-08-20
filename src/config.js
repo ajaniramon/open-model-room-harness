@@ -310,6 +310,11 @@ export const config = Object.freeze({
   chatFallbackProvider,
   chatFallbackModel: process.env.MODEL_FALLBACK_MODEL?.trim() || "",
   chatFallbackBaseUrl: process.env.MODEL_FALLBACK_BASE_URL?.trim() || "",
+  // Circuit breaker: after this many consecutive transport failures a route is
+  // skipped for the cooldown window, so a dead primary jumps straight to fallback.
+  breakerThreshold: integer("MODEL_BREAKER_THRESHOLD", 3, { min: 1, max: 100 }),
+  breakerCooldownMs:
+    integer("MODEL_BREAKER_COOLDOWN_SECONDS", 30, { min: 1, max: 3_600 }) * 1_000,
   modelProviders,
   nanoGptModel:
     process.env.NANOGPT_MODEL?.trim() ||

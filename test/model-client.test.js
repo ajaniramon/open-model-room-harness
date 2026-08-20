@@ -337,3 +337,59 @@ test("explicit per-call routes fail loudly instead of silently falling back", as
   );
   assert.equal(calls, 1, "an explicitly routed call never reroutes to the fallback");
 });
+
+test("a semantic failure (tool-iteration cap) does not replay on the fallback", async () => {
+  // Primary always asks for a tool; the loop hits maxToolIterations and throws a
+  // semantic error, which must NOT re-run the whole turn (and its tools) on fallback.
+  let fallbackCalls = 0;
+  const fetchMock = async (url) => {
+    if (url.startsWith("https://nano.test")) {
+      return Response.json({
+        choices: [{ message: { role: "assistant", content: null, tool_calls: [
+          { id: "c1", type: "function", function: { name: "web_search", arguments: "{}" } },
+        ] } }],
+      });
+    }
+    fallbackCalls += 1;
+    return Response.json({ choices: [{ message: { role: "assistant", content: "fallback" } }] });
+  };
+  const runtime = {
+    tools: [{ type: "function", function: { name: "web_search", parameters: { type: "object" } } }],
+    call: async () => "tool result",
+  };
+  const config = { ...testConfig("nanogpt"), maxToolIterations: 2, chatFallbackProvider: "openai" };
+  await assert.rejects(
+    new ModelClient(config, fetchMock, runtime).complete([{ role: "user", content: "search" }], {
+      enabledToolNames: ["web_search"],
+    }),
+    /exceeded 2 tool iterations/,
+  );
+  assert.equal(fallbackCalls, 0, "the paid tool loop is never replayed on the fallback");
+});
+
+test("the circuit breaker routes straight to fallback after repeated primary failures", async () => {
+  let clock = 1_000_000;
+  const primaryCalls = [];
+  const fetchMock = async (url) => {
+    if (url.startsWith("https://nano.test")) {
+      primaryCalls.push(clock);
+      return new Response("down", { status: 503 });
+    }
+    return Response.json({ choices: [{ message: { role: "assistant", content: "fallback" } }] });
+  };
+  const config = {
+    ...testConfig("nanogpt"),
+    chatFallbackProvider: "openai",
+    breakerThreshold: 2,
+    breakerCooldownMs: 60_000,
+  };
+  const client = new ModelClient(config, fetchMock, null, { now: () => clock });
+  // Two failing turns trip the breaker (each does its own retry, so 2 primary hits/turn).
+  await client.complete([{ role: "user", content: "a" }]);
+  await client.complete([{ role: "user", content: "b" }]);
+  const afterTrip = primaryCalls.length;
+  // Third turn: breaker is open, so the primary is skipped entirely.
+  const result = await client.complete([{ role: "user", content: "c" }]);
+  assert.equal(result, "fallback");
+  assert.equal(primaryCalls.length, afterTrip, "no further primary calls while the circuit is open");
+});

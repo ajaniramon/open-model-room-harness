@@ -69,6 +69,8 @@ export async function boundedFetch(
       }
       const error = new Error(`${label} returned HTTP ${response.status}${detail ? `: ${detail}` : "."}`);
       error.status = response.status;
+      const retryAfter = Number(response.headers.get("retry-after"));
+      if (Number.isFinite(retryAfter) && retryAfter > 0) error.retryAfterMs = retryAfter * 1_000;
       throw error;
     }
     if (parse === "json") return await response.json();

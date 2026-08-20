@@ -1,5 +1,5 @@
 import { boundedFetch, readBoundedBuffer } from "./http.js";
-import { isRetryableRequestError, retry } from "./retry.js";
+import { isRetryableIdempotentError, retry } from "./retry.js";
 
 const DEFAULT_ALIASES = Object.freeze({
   banana: "nano-banana-2-lite",
@@ -190,7 +190,7 @@ export class NanoGptImageClient {
       {
         attempts: 2,
         backoffMs: 700,
-        shouldRetry: isRetryableRequestError,
+        shouldRetry: isRetryableIdempotentError,
         label: "NanoGPT image generation",
       },
     );

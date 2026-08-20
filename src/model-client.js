@@ -163,10 +163,13 @@ function geminiMessages(messages) {
 }
 
 export class ModelClient {
-  constructor(config, fetchImplementation = fetch, toolRuntime = null) {
+  constructor(config, fetchImplementation = fetch, toolRuntime = null, { now = Date.now } = {}) {
     this.config = config;
     this.fetch = fetchImplementation;
     this.toolRuntime = toolRuntime;
+    this.now = now;
+    // Per provider:model consecutive-failure state for the circuit breaker.
+    this.breaker = new Map();
   }
 
   route(options = {}) {
@@ -230,6 +233,44 @@ export class ModelClient {
     return route;
   }
 
+  #breakerKey(route) {
+    return `${route.provider}:${route.model}`;
+  }
+
+  // A route is "open" (skipped) after enough consecutive transport failures, for a
+  // cooldown window, so a fully-down primary does not cost every turn its full
+  // retry budget × timeout before the fallback is even tried.
+  #breakerOpen(route) {
+    const state = this.breaker.get(this.#breakerKey(route));
+    return Boolean(state && state.openUntil > this.now());
+  }
+
+  #recordBreaker(route, ok) {
+    const key = this.#breakerKey(route);
+    if (ok) {
+      this.breaker.delete(key);
+      return;
+    }
+    const threshold = this.config.breakerThreshold || 3;
+    const cooldownMs = this.config.breakerCooldownMs || 30_000;
+    const state = this.breaker.get(key) || { failures: 0, openUntil: 0 };
+    state.failures += 1;
+    if (state.failures >= threshold) state.openUntil = this.now() + cooldownMs;
+    this.breaker.set(key, state);
+  }
+
+  // Only a transport-shaped failure of the primary route warrants re-running the
+  // whole turn on the fallback: a semantic failure (no content, tool-iteration
+  // cap) would just repeat, and once a tool has executed the turn is not safe to
+  // replay because tool side effects are not guaranteed idempotent.
+  #shouldFallback(error, fallback, route) {
+    if (!fallback || (fallback.provider === route.provider && fallback.model === route.model)) {
+      return false;
+    }
+    if (error?.fallbackable === false) return false;
+    return Boolean(error?.status) || isRetryableRequestError(error);
+  }
+
   async complete(messages, { enabledToolNames = [], ...options } = {}) {
     const route = this.route(options);
     if (route.provider === "none") {
@@ -238,16 +279,22 @@ export class ModelClient {
         "Runtime controls, behavior modes, participation policy, and MCP plumbing can be tested."
       );
     }
+    const fallback = this.fallbackRoute(options);
+    // Breaker: if the primary is tripped and a fallback exists, skip straight to it.
+    if (fallback && this.#breakerOpen(route) && !this.#breakerOpen(fallback)) {
+      console.warn(
+        `${providerLabel(route.provider)} '${route.model}' circuit open; using fallback ` +
+          `${providerLabel(fallback.provider)} '${fallback.model}' directly`,
+      );
+      return this.converse(messages, enabledToolNames, fallback);
+    }
     try {
-      return await this.converse(messages, enabledToolNames, route);
+      const result = await this.converse(messages, enabledToolNames, route);
+      this.#recordBreaker(route, true);
+      return result;
     } catch (error) {
-      const fallback = this.fallbackRoute(options);
-      if (
-        !fallback ||
-        (fallback.provider === route.provider && fallback.model === route.model)
-      ) {
-        throw error;
-      }
+      if (error?.status || isRetryableRequestError(error)) this.#recordBreaker(route, false);
+      if (!this.#shouldFallback(error, fallback, route)) throw error;
       console.warn(
         `${providerLabel(route.provider)} '${route.model}' failed (${error.message || error}); ` +
           `retrying the turn with fallback ${providerLabel(fallback.provider)} '${fallback.model}'`,
@@ -261,6 +308,15 @@ export class ModelClient {
     const maxIterations = this.config.maxToolIterations || 4;
     let emptyResponseRetries = 0;
     let toolIterations = 0;
+    // Once a tool has executed, the turn cannot be safely replayed on a fallback
+    // route: any later failure is stamped non-fallbackable to avoid re-running
+    // paid, non-idempotent tool calls.
+    let toolsExecuted = false;
+    const semantic = (message) => {
+      const error = new Error(message);
+      error.fallbackable = false;
+      return error;
+    };
     const enabledNames = new Set(enabledToolNames);
     const activeTools = (this.toolRuntime?.tools || []).filter((tool) =>
       enabledNames.has(tool?.function?.name),
@@ -278,11 +334,16 @@ export class ModelClient {
       : null;
 
     while (true) {
-      const { message, finishReason } = await this.request(
-        conversation,
-        activeToolRuntime,
-        route,
-      );
+      let message;
+      let finishReason;
+      try {
+        ({ message, finishReason } = await this.request(conversation, activeToolRuntime, route));
+      } catch (error) {
+        // A transport failure after a tool already ran must not trigger a fallback
+        // replay that pays for those tool calls again.
+        if (toolsExecuted && error) error.fallbackable = false;
+        throw error;
+      }
       const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
       if (!toolCalls.length) {
         const content = typeof message.content === "string" ? message.content.trim() : "";
@@ -291,7 +352,7 @@ export class ModelClient {
           continue;
         }
         if (!content) {
-          throw new Error(
+          throw semantic(
             `${providerLabel(route.provider)} returned no visible response content after retry ` +
               `(finish_reason=${finishReason || "unknown"})`,
           );
@@ -299,12 +360,12 @@ export class ModelClient {
         return content;
       }
       if (!activeToolRuntime) {
-        throw new Error(
+        throw semantic(
           `${providerLabel(route.provider)} requested a tool but no tool runtime is configured`,
         );
       }
       if (toolIterations >= maxIterations) {
-        throw new Error(`${providerLabel(route.provider)} exceeded ${maxIterations} tool iterations`);
+        throw semantic(`${providerLabel(route.provider)} exceeded ${maxIterations} tool iterations`);
       }
 
       // Mint a stable id on the tool call itself before pushing, so the assistant
@@ -322,6 +383,7 @@ export class ModelClient {
         const name = toolCall?.function?.name || "";
         const args = toolCall?.function?.arguments || "{}";
         const result = await activeToolRuntime.call(name, args);
+        toolsExecuted = true;
         conversation.push({
           role: "tool",
           tool_call_id: toolCall.id,
@@ -351,6 +413,8 @@ export class ModelClient {
               `${providerLabel(route.provider)} returned HTTP ${response.status}: ${details}`,
             );
             error.status = response.status;
+            const retryAfter = Number(response.headers?.get?.("retry-after"));
+            if (Number.isFinite(retryAfter) && retryAfter > 0) error.retryAfterMs = retryAfter * 1_000;
             throw error;
           }
           const payload = await response.json();
@@ -362,6 +426,9 @@ export class ModelClient {
       {
         attempts: 2,
         backoffMs: 700,
+        // Jitter so several concurrent turns sharing a 429 do not all retry in
+        // lockstep and collide again.
+        jitterMs: 250,
         shouldRetry: isRetryableRequestError,
         label: `${providerLabel(route.provider)} request`,
       },
