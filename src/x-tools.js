@@ -1,3 +1,5 @@
+import { retry } from "./retry.js";
+
 export const X_SEARCH_TOOL = Object.freeze({
   type: "function",
   function: {
@@ -144,35 +146,33 @@ export class KeylessXDiscovery {
   }
 
   async fetchHtml(url, provider) {
-    let lastError;
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 20_000);
-      try {
-        const response = await this.fetch(url, {
-          headers: {
-            Accept: "text/html",
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
-          },
-          signal: controller.signal,
-        });
-        if (!response.ok) {
-          lastError = new Error(`${provider} returned HTTP ${response.status}.`);
-          continue;
+    return retry(
+      async () => {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 20_000);
+        try {
+          const response = await this.fetch(url, {
+            headers: {
+              Accept: "text/html",
+              "User-Agent":
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
+            },
+            signal: controller.signal,
+          });
+          if (!response.ok) {
+            throw new Error(`${provider} returned HTTP ${response.status}.`);
+          }
+          const html = await response.text();
+          if (html.length > 2_000_000) {
+            throw new Error(`${provider} response was unexpectedly large.`);
+          }
+          return html;
+        } finally {
+          clearTimeout(timeout);
         }
-        const html = await response.text();
-        if (html.length > 2_000_000) {
-          throw new Error(`${provider} response was unexpectedly large.`);
-        }
-        return html;
-      } catch (error) {
-        lastError = error;
-      } finally {
-        clearTimeout(timeout);
-      }
-    }
-    throw lastError || new Error(`${provider} request failed.`);
+      },
+      { attempts: 2, backoffMs: 0, label: `${provider} request` },
+    );
   }
 
   yahooUrls(html, count) {

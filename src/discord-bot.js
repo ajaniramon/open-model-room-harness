@@ -21,6 +21,7 @@ import {
   isRuntimeControlAuthorized,
   parseRuntimeControlCommand,
 } from "./runtime-control.js";
+import { retry } from "./retry.js";
 import { SpontaneousGate } from "./spontaneous.js";
 import { extractXPostUrls } from "./x-tools.js";
 
@@ -371,32 +372,57 @@ export function normalizeCompiledImagePrompt(value) {
 }
 
 export async function compileImagePrompt(nanoGpt, promptContext, config) {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const rawPrompt = await nanoGpt.complete(promptContext, {
-      provider: "nanogpt",
-      model: config.imagePromptModel,
-      baseUrl: config.imagePromptBaseUrl,
-      reasoningEffort: "high",
-      maxOutputTokens: 512,
-    });
-    const imagePrompt = normalizeCompiledImagePrompt(rawPrompt);
-    if (imagePrompt) return imagePrompt;
-    promptContext.push(
-      { role: "assistant", content: rawPrompt },
-      {
-        role: "user",
-        content:
-          "The previous output was not a usable visual prompt. Return only one concrete image prompt of 40-800 characters. Preserve the owner's creative brief. No JJ roleplay, introduction, commentary, Markdown, or quotation marks.",
+  return retry(
+    async () => {
+      const rawPrompt = await nanoGpt.complete(promptContext, {
+        provider: "nanogpt",
+        model: config.imagePromptModel,
+        baseUrl: config.imagePromptBaseUrl,
+        reasoningEffort: "high",
+        maxOutputTokens: 512,
+      });
+      const imagePrompt = normalizeCompiledImagePrompt(rawPrompt);
+      if (imagePrompt) return imagePrompt;
+      const error = new Error("Image prompt compiler returned no valid visual prompt.");
+      error.rawPrompt = rawPrompt;
+      throw error;
+    },
+    {
+      attempts: 2,
+      backoffMs: 0,
+      // Only the semantic failure retries with a correction turn; a transport
+      // error already spent its own retry inside the model client.
+      shouldRetry: (error) => typeof error.rawPrompt === "string",
+      onRetry: (error) => {
+        promptContext.push(
+          { role: "assistant", content: error.rawPrompt },
+          {
+            role: "user",
+            content:
+              "The previous output was not a usable visual prompt. Return only one concrete image prompt of 40-800 characters. Preserve the owner's creative brief. No JJ roleplay, introduction, commentary, Markdown, or quotation marks.",
+          },
+        );
       },
-    );
-  }
-  throw new Error("Image prompt compiler returned no valid visual prompt.");
+      label: "Image prompt compilation",
+    },
+  );
 }
 
 export function isImageGenerationAuthorized(author, config) {
   const id = String(author?.id || "");
   const username = String(author?.username || "").toLowerCase();
   return config.imageAllowedUserIds.has(id) || config.imageAllowedUsernames.has(username);
+}
+
+// A message whose explicit @mentions all point at someone else is addressed to
+// that recipient, not to this bot. The continuation window and "all" trigger mode
+// must not treat it as this bot's turn, or the room gets an uninvited reply.
+export function addressesOtherRecipient(message, botUser) {
+  const mentionedIds = [...String(message.content || "").matchAll(/<@!?(\d+)>/g)].map(
+    (match) => match[1],
+  );
+  if (!mentionedIds.length) return false;
+  return !mentionedIds.includes(String(botUser.id));
 }
 
 export async function resolveResponseTrigger(message, client, config, participationController = null) {
@@ -410,9 +436,11 @@ export async function resolveResponseTrigger(message, client, config, participat
   }
 
   const explicitMention = message.mentions.has(client.user);
+  const addressedElsewhere = !explicitMention && addressesOtherRecipient(message, client.user);
   if (participationController?.enabled) {
     const isOwner = participationController.isOwner(message.author, config);
     if (explicitMention) return { directResponse: true, explicitMention: true, continuation: false };
+    if (addressedElsewhere) return ignored;
     const continuation = participationController.hasActiveConversation({
       guildId: message.guildId,
       channelId: message.channelId,
@@ -423,7 +451,7 @@ export async function resolveResponseTrigger(message, client, config, participat
   }
 
   if (config.triggerMode === "all") {
-    return { directResponse: true, explicitMention, continuation: false };
+    return { directResponse: !addressedElsewhere, explicitMention, continuation: false };
   }
   const reply = await isReplyToBot(message, client.user);
   return { directResponse: explicitMention || reply, explicitMention, continuation: false };
@@ -434,6 +462,7 @@ function isSpontaneousCandidate(message, client, config) {
   if (isBlockedAuthor(message.author, config)) return false;
   if (message.author.id === client.user.id || message.author.bot || message.webhookId) return false;
   if (config.allowedChannelIds.size && !config.allowedChannelIds.has(message.channelId)) return false;
+  if (addressesOtherRecipient(message, client.user)) return false;
   const content = message.content.trim();
   if (/^[!/]/.test(content)) return false;
   return content.length >= config.spontaneousMinChars || message.attachments.size > 0;
@@ -728,6 +757,20 @@ export function createDiscordBot({
   });
   const channelQueues = new Map();
   const spontaneousGate = new SpontaneousGate(config);
+  // The gateway can redeliver the same MessageCreate event (reconnects, resumed
+  // sessions). The channel queue serializes turns but does not deduplicate them,
+  // so a redelivered event must be dropped before it enqueues a second model turn.
+  const handledMessageIds = new Set();
+  function isDuplicateDelivery(messageId) {
+    const id = String(messageId || "");
+    if (!id) return false;
+    if (handledMessageIds.has(id)) return true;
+    handledMessageIds.add(id);
+    while (handledMessageIds.size > 5_000) {
+      handledMessageIds.delete(handledMessageIds.values().next().value);
+    }
+    return false;
+  }
 
   // Items loaded from the durable relay store no longer have the original
   // in-memory callback. Reconstruct delivery from Discord IDs after restart.
@@ -783,6 +826,12 @@ export function createDiscordBot({
   });
 
   client.on(Events.MessageCreate, async (message) => {
+    if (isDuplicateDelivery(message.id)) {
+      logger.info(
+        `Dropped duplicate Discord delivery message=${message.id} channel=${message.channelId}`,
+      );
+      return;
+    }
     const runtimeCommand = runtimeControl ? parseRuntimeControlCommand(message.content) : null;
     const parsedMemoryCommand = memoryStore ? parseMemoryCommand(message.content) : null;
     const runtimeAuthorized = runtimeCommand

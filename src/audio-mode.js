@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { isRetryableRequestError, retry } from "./retry.js";
 
 export function prepareSpeechText(text, maxChars = 1_200) {
   const speech = String(text || "").trim();
@@ -68,37 +69,49 @@ export class ElevenLabsTtsClient {
     const speech = prepareSpeechText(text, this.maxChars);
     if (!speech) throw new Error("Cannot synthesize an empty response.");
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
-    try {
-      const url =
-        `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(this.voiceId)}` +
-        `?output_format=${encodeURIComponent(this.outputFormat)}`;
-      const response = await this.fetch(url, {
-        method: "POST",
-        headers: {
-          Accept: "audio/mpeg",
-          "Content-Type": "application/json",
-          "xi-api-key": this.apiKey,
-        },
-        body: JSON.stringify({
-          text: speech,
-          model_id: this.modelId,
-        }),
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        const details = (await response.text()).slice(0, 500);
-        throw new Error(`ElevenLabs returned HTTP ${response.status}: ${details}`);
-      }
-      const audio = Buffer.from(await response.arrayBuffer());
-      if (!audio.length) throw new Error("ElevenLabs returned an empty audio file.");
-      if (audio.length > this.maxBytes) {
-        throw new Error(`Generated audio exceeds the ${this.maxBytes}-byte upload limit.`);
-      }
-      return audio;
-    } finally {
-      clearTimeout(timeout);
-    }
+    return retry(
+      async () => {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+        try {
+          const url =
+            `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(this.voiceId)}` +
+            `?output_format=${encodeURIComponent(this.outputFormat)}`;
+          const response = await this.fetch(url, {
+            method: "POST",
+            headers: {
+              Accept: "audio/mpeg",
+              "Content-Type": "application/json",
+              "xi-api-key": this.apiKey,
+            },
+            body: JSON.stringify({
+              text: speech,
+              model_id: this.modelId,
+            }),
+            signal: controller.signal,
+          });
+          if (!response.ok) {
+            const details = (await response.text()).slice(0, 500);
+            const error = new Error(`ElevenLabs returned HTTP ${response.status}: ${details}`);
+            error.status = response.status;
+            throw error;
+          }
+          const audio = Buffer.from(await response.arrayBuffer());
+          if (!audio.length) throw new Error("ElevenLabs returned an empty audio file.");
+          if (audio.length > this.maxBytes) {
+            throw new Error(`Generated audio exceeds the ${this.maxBytes}-byte upload limit.`);
+          }
+          return audio;
+        } finally {
+          clearTimeout(timeout);
+        }
+      },
+      {
+        attempts: 2,
+        backoffMs: 700,
+        shouldRetry: isRetryableRequestError,
+        label: "ElevenLabs synthesis",
+      },
+    );
   }
 }

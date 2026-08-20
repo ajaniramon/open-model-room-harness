@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ChannelType } from "discord.js";
 import {
+  addressesOtherRecipient,
   allowsXPostPrefetch,
   buildMessageHeader,
   isBlockedAuthor,
@@ -79,6 +80,54 @@ test("conversation policy opens on mention, follows the same-user window, then g
     explicitMention: true,
     continuation: false,
   });
+});
+
+test("a message @mentioning another recipient never becomes this bot's turn", async () => {
+  const controller = {
+    enabled: true,
+    isOwner: () => false,
+    hasActiveConversation: () => true,
+  };
+  const config = {
+    blockedUsernames: new Set(),
+    respondToBots: false,
+    allowedChannelIds: new Set(),
+    triggerMode: "all",
+  };
+  const client = { user: { id: "111" } };
+  const message = {
+    author: { id: "person", username: "person", bot: false },
+    channel: { type: 0 },
+    guildId: "guild",
+    channelId: "channel",
+    content: "<@222> you're the best gremlin out there",
+    mentions: { has: () => false },
+  };
+
+  // The continuation window is open, but the message is addressed to someone else.
+  assert.deepEqual(await resolveResponseTrigger(message, client, config, controller), {
+    directResponse: false,
+    explicitMention: false,
+    continuation: false,
+  });
+
+  // The "all" trigger mode also stays out of turns addressed to another recipient.
+  assert.deepEqual(await resolveResponseTrigger(message, client, config, null), {
+    directResponse: false,
+    explicitMention: false,
+    continuation: false,
+  });
+
+  // Mentioning this bot alongside someone else is still an explicit trigger.
+  message.content = "<@111> and <@222> what do you two think?";
+  message.mentions.has = (user) => user.id === "111";
+  const triggered = await resolveResponseTrigger(message, client, config, controller);
+  assert.equal(triggered.directResponse, true);
+  assert.equal(triggered.explicitMention, true);
+
+  assert.equal(addressesOtherRecipient({ content: "no mentions here" }, { id: "111" }), false);
+  assert.equal(addressesOtherRecipient({ content: "<@!222> hi" }, { id: "111" }), true);
+  assert.equal(addressesOtherRecipient({ content: "<@!111> hi" }, { id: "111" }), false);
 });
 
 test("stamps context headers with the post time and its age", () => {

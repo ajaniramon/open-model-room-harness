@@ -1,3 +1,5 @@
+import { isRetryableRequestError, retry } from "./retry.js";
+
 const DEFAULT_ALIASES = Object.freeze({
   banana: "nano-banana-2-lite",
   "banana-lite": "nano-banana-2-lite",
@@ -105,62 +107,80 @@ export class NanoGptImageClient {
       );
     }
     const model = await this.resolveModel(requestedModel);
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
-    try {
-      const response = await this.fetch(`${this.baseUrl}/images/generations`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model,
-          prompt: cleanPrompt,
-          n: 1,
-          response_format: "b64_json",
-        }),
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        const details = (await response.text()).slice(0, 500);
-        throw new Error(`NanoGPT image generation returned HTTP ${response.status}: ${details}`);
-      }
-      const payload = await response.json();
-      const entries = Array.isArray(payload?.data)
-        ? payload.data
-        : Array.isArray(payload?.images)
-          ? payload.images
-          : [];
-      if (!entries.length) throw new Error("NanoGPT returned no generated images.");
+    // Retries stay limited to throttling/5xx/network failures so a retry never
+    // pays twice for a generation that already succeeded.
+    return retry(
+      async () => {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+        try {
+          const response = await this.fetch(`${this.baseUrl}/images/generations`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${this.apiKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model,
+              prompt: cleanPrompt,
+              n: 1,
+              response_format: "b64_json",
+            }),
+            signal: controller.signal,
+          });
+          if (!response.ok) {
+            const details = (await response.text()).slice(0, 500);
+            const error = new Error(
+              `NanoGPT image generation returned HTTP ${response.status}: ${details}`,
+            );
+            error.status = response.status;
+            throw error;
+          }
+          const payload = await response.json();
+          const entries = Array.isArray(payload?.data)
+            ? payload.data
+            : Array.isArray(payload?.images)
+              ? payload.images
+              : [];
+          if (!entries.length) throw new Error("NanoGPT returned no generated images.");
 
-      const images = [];
-      for (const entry of entries.slice(0, 4)) {
-        const b64 = typeof entry === "string" && !/^https:\/\//i.test(entry)
-          ? entry
-          : entry?.b64_json || entry?.base64 || null;
-        if (b64) {
-          images.push(decodeBase64Image(b64, this.maxBytes));
-          continue;
+          const images = [];
+          for (const entry of entries.slice(0, 4)) {
+            const b64 = typeof entry === "string" && !/^https:\/\//i.test(entry)
+              ? entry
+              : entry?.b64_json || entry?.base64 || null;
+            if (b64) {
+              images.push(decodeBase64Image(b64, this.maxBytes));
+              continue;
+            }
+            const url = typeof entry === "string" ? entry : entry?.url;
+            if (!isSafeHostedImageUrl(url)) {
+              throw new Error("NanoGPT returned an unsafe or unsupported image URL.");
+            }
+            const hosted = await this.fetch(url, { signal: controller.signal });
+            if (!hosted.ok) {
+              throw new Error(`Hosted image download returned HTTP ${hosted.status}.`);
+            }
+            const buffer = Buffer.from(await hosted.arrayBuffer());
+            if (!buffer.length || buffer.length > this.maxBytes) {
+              throw new Error("Hosted generated image is empty or exceeds the upload limit.");
+            }
+            images.push({
+              buffer,
+              extension: extensionForMime(hosted.headers.get("content-type") || "image/png"),
+            });
+          }
+          return { model, prompt: cleanPrompt, images };
+        } finally {
+          clearTimeout(timeout);
         }
-        const url = typeof entry === "string" ? entry : entry?.url;
-        if (!isSafeHostedImageUrl(url)) {
-          throw new Error("NanoGPT returned an unsafe or unsupported image URL.");
-        }
-        const hosted = await this.fetch(url, { signal: controller.signal });
-        if (!hosted.ok) throw new Error(`Hosted image download returned HTTP ${hosted.status}.`);
-        const buffer = Buffer.from(await hosted.arrayBuffer());
-        if (!buffer.length || buffer.length > this.maxBytes) {
-          throw new Error("Hosted generated image is empty or exceeds the upload limit.");
-        }
-        images.push({
-          buffer,
-          extension: extensionForMime(hosted.headers.get("content-type") || "image/png"),
-        });
-      }
-      return { model, prompt: cleanPrompt, images };
-    } finally {
-      clearTimeout(timeout);
-    }
+      },
+      {
+        attempts: 2,
+        backoffMs: 700,
+        shouldRetry: isRetryableRequestError,
+        label: "NanoGPT image generation",
+      },
+    );
   }
 }

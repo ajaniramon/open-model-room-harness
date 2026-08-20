@@ -64,7 +64,7 @@ test("the owner's DM reads guild memories, nobody else crosses a scope", () => {
   assert.match(block, /Windows service/);
 });
 
-test("orders by speaker, then people in the room, then significance and recency", () => {
+test("orders by speaker, then people in the room, then recency and significance", () => {
   const speaker = record({ subject: { userId: "1", displayName: "Owner" }, significance: 1 });
   const present = record({ subject: { userId: "2", displayName: "Luca" }, significance: 5 });
   const absent = record({ subject: { userId: "3", displayName: "Ghost" }, significance: 5 });
@@ -83,6 +83,33 @@ test("orders by speaker, then people in the room, then significance and recency"
     ["Owner", "Luca", "Luca", "Ghost"],
   );
   assert.equal(ordered[1].id, present.id, "the newer of the two Luca facts comes first");
+});
+
+test("a fresh low-significance note outranks a stale high-significance one", () => {
+  // The "G's PC" regression: a two-week-old "waiting for a fan" note kept beating
+  // the recent "already fixed" note because significance ordered before recency.
+  const stale = record({
+    text: "G's PC is broken and he is waiting for a replacement fan",
+    significance: 5,
+    createdAt: new Date(NOW - 14 * DAY_MS).toISOString(),
+  });
+  const fresh = record({
+    text: "G has already fixed his PC",
+    significance: 2,
+    createdAt: new Date(NOW - DAY_MS).toISOString(),
+  });
+  const ordered = orderMemories([stale, fresh], {
+    speakerUserId: "1",
+    presentUserIds: new Set(["1"]),
+  });
+  assert.equal(ordered[0].text, "G has already fixed his PC", "recency wins over significance");
+
+  const block = formatMemoryBlock(ordered);
+  assert.match(block, /newer one supersedes the older/i);
+  assert.ok(
+    block.indexOf("already fixed") < block.indexOf("waiting for a replacement fan"),
+    "the block lists the fresh note before the stale one",
+  );
 });
 
 test("ordering ignores the current message entirely", () => {

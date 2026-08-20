@@ -1,4 +1,5 @@
-const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+import { isRetryableRequestError, retry } from "./retry.js";
+
 const SUPPORTED_PROVIDERS = new Set([
   "none",
   "nanogpt",
@@ -8,8 +9,6 @@ const SUPPORTED_PROVIDERS = new Set([
   "gemini",
   "local",
 ]);
-
-const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 function providerLabel(provider) {
   return {
@@ -210,6 +209,27 @@ export class ModelClient {
     return route;
   }
 
+  // The fallback route only exists for the default conversation path. A call that
+  // explicitly picked its own provider, model, or endpoint (escalations, sidecars,
+  // prompt compilers) asked for that exact route and must fail loudly instead.
+  fallbackRoute(options = {}) {
+    if (options.provider || options.model || options.baseUrl) return null;
+    const provider = String(this.config.chatFallbackProvider || "").toLowerCase();
+    if (!provider || provider === "none" || !SUPPORTED_PROVIDERS.has(provider)) return null;
+    const defaults = this.config.modelProviders?.[provider] || {};
+    const route = {
+      provider,
+      apiKey: defaults.apiKey || "",
+      model: this.config.chatFallbackModel || defaults.model || "",
+      baseUrl: this.config.chatFallbackBaseUrl || defaults.baseUrl || "",
+      reasoningEffort: this.config.reasoningEffort,
+      maxOutputTokens: options.maxOutputTokens ?? this.config.maxOutputTokens,
+    };
+    if (!route.model || !route.baseUrl) return null;
+    if (!route.apiKey && provider !== "local") return null;
+    return route;
+  }
+
   async complete(messages, { enabledToolNames = [], ...options } = {}) {
     const route = this.route(options);
     if (route.provider === "none") {
@@ -218,6 +238,25 @@ export class ModelClient {
         "Runtime controls, behavior modes, participation policy, and MCP plumbing can be tested."
       );
     }
+    try {
+      return await this.converse(messages, enabledToolNames, route);
+    } catch (error) {
+      const fallback = this.fallbackRoute(options);
+      if (
+        !fallback ||
+        (fallback.provider === route.provider && fallback.model === route.model)
+      ) {
+        throw error;
+      }
+      console.warn(
+        `${providerLabel(route.provider)} '${route.model}' failed (${error.message || error}); ` +
+          `retrying the turn with fallback ${providerLabel(fallback.provider)} '${fallback.model}'`,
+      );
+      return this.converse(messages, enabledToolNames, fallback);
+    }
+  }
+
+  async converse(messages, enabledToolNames, route) {
     const conversation = messages.map((message) => ({ ...message }));
     const maxIterations = this.config.maxToolIterations || 4;
     let emptyResponseRetries = 0;
@@ -289,39 +328,38 @@ export class ModelClient {
   }
 
   async request(messages, activeToolRuntime, route) {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), this.config.apiTimeoutMs);
-      try {
-        const response = await this.providerRequest(
-          messages,
-          activeToolRuntime,
-          route,
-          controller.signal,
-        );
-        if (!response.ok) {
-          const details = (await response.text()).slice(0, 500);
-          if (attempt === 0 && RETRYABLE_STATUS.has(response.status)) {
-            await sleep(700);
-            continue;
-          }
-          throw new Error(
-            `${providerLabel(route.provider)} returned HTTP ${response.status}: ${details}`,
+    return retry(
+      async () => {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), this.config.apiTimeoutMs);
+        try {
+          const response = await this.providerRequest(
+            messages,
+            activeToolRuntime,
+            route,
+            controller.signal,
           );
+          if (!response.ok) {
+            const details = (await response.text()).slice(0, 500);
+            const error = new Error(
+              `${providerLabel(route.provider)} returned HTTP ${response.status}: ${details}`,
+            );
+            error.status = response.status;
+            throw error;
+          }
+          const payload = await response.json();
+          return this.normalizeResponse(payload, route.provider);
+        } finally {
+          clearTimeout(timeout);
         }
-        const payload = await response.json();
-        return this.normalizeResponse(payload, route.provider);
-      } catch (error) {
-        if (attempt === 0 && (error.name === "AbortError" || error instanceof TypeError)) {
-          await sleep(700);
-          continue;
-        }
-        throw error;
-      } finally {
-        clearTimeout(timeout);
-      }
-    }
-    throw new Error(`${providerLabel(route.provider)} request failed after retry`);
+      },
+      {
+        attempts: 2,
+        backoffMs: 700,
+        shouldRetry: isRetryableRequestError,
+        label: `${providerLabel(route.provider)} request`,
+      },
+    );
   }
 
   providerRequest(messages, activeToolRuntime, route, signal) {

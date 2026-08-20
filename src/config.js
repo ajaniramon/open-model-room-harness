@@ -70,6 +70,18 @@ const chatProvider = process.env.MODEL_PROVIDER?.trim().toLowerCase() || "nanogp
 if (!new Set(["none", "nanogpt", "openai", "anthropic", "xai", "gemini", "local"]).has(chatProvider)) {
   throw new Error("MODEL_PROVIDER must be one of: none, nanogpt, openai, anthropic, xai, gemini, local");
 }
+// Opt-in fallback for the default conversation route: when the primary inference
+// call fails after its retry, the turn is repeated once on this route instead of
+// surfacing an error message in Discord. Empty means disabled.
+const chatFallbackProvider = process.env.MODEL_FALLBACK_PROVIDER?.trim().toLowerCase() || "";
+if (
+  chatFallbackProvider &&
+  !new Set(["nanogpt", "openai", "anthropic", "xai", "gemini", "local"]).has(chatFallbackProvider)
+) {
+  throw new Error(
+    "MODEL_FALLBACK_PROVIDER must be one of: nanogpt, openai, anthropic, xai, gemini, local",
+  );
+}
 
 const memoryCaptureMode = String(
   configured("memory.extraction.captureMode", "JJ_MEMORY_CAPTURE_MODE", "observation"),
@@ -295,6 +307,9 @@ export const config = Object.freeze({
   chatApiKeyEnv: providerApiKeyEnv[chatProvider],
   chatModel: modelProviders[chatProvider].model,
   chatBaseUrl: modelProviders[chatProvider].baseUrl,
+  chatFallbackProvider,
+  chatFallbackModel: process.env.MODEL_FALLBACK_MODEL?.trim() || "",
+  chatFallbackBaseUrl: process.env.MODEL_FALLBACK_BASE_URL?.trim() || "",
   modelProviders,
   nanoGptModel:
     process.env.NANOGPT_MODEL?.trim() ||

@@ -293,3 +293,47 @@ test("can override the primary provider for a NanoGPT auxiliary route", async ()
   assert.equal(request.headers.Authorization, "Bearer nano-key");
   assert.equal(request.body.model, "vision-model");
 });
+
+test("falls back to the configured fallback route when the primary turn fails", async () => {
+  const calls = [];
+  const fetchMock = async (url, options) => {
+    calls.push({ url, body: JSON.parse(options.body) });
+    if (url.startsWith("https://nano.test")) {
+      return new Response("upstream exploded", { status: 400 });
+    }
+    return Response.json({
+      choices: [{ message: { role: "assistant", content: "fallback answer" } }],
+    });
+  };
+  const config = {
+    ...testConfig("nanogpt"),
+    chatFallbackProvider: "openai",
+    chatFallbackModel: "",
+    chatFallbackBaseUrl: "",
+  };
+  const result = await new ModelClient(config, fetchMock).complete([
+    { role: "user", content: "Hello" },
+  ]);
+  assert.equal(result, "fallback answer");
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].url, "https://api.openai.test/v1/chat/completions");
+  assert.equal(calls[1].body.model, "gpt-5.6-terra");
+});
+
+test("explicit per-call routes fail loudly instead of silently falling back", async () => {
+  const config = { ...testConfig("nanogpt"), chatFallbackProvider: "openai" };
+  let calls = 0;
+  const fetchMock = async () => {
+    calls += 1;
+    return new Response("nope", { status: 400 });
+  };
+  await assert.rejects(
+    new ModelClient(config, fetchMock).complete([{ role: "user", content: "hi" }], {
+      provider: "nanogpt",
+      model: "special-model",
+      baseUrl: "https://nano.test/special",
+    }),
+    /HTTP 400/,
+  );
+  assert.equal(calls, 1, "an explicitly routed call never reroutes to the fallback");
+});
