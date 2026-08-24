@@ -670,34 +670,14 @@ export const config = Object.freeze({
   memoryInjectionMaxItems: configuredInteger(
     "memory.injection.maxItems",
     "JJ_MEMORY_INJECTION_MAX_ITEMS",
-    40,
+    60,
     { min: 1, max: 2_000 },
   ),
   memoryInjectionMaxChars: configuredInteger(
     "memory.injection.maxChars",
     "JJ_MEMORY_INJECTION_MAX_CHARS",
-    6_000,
-    // The upper bound is deliberately conservative: the stable core is injected on
-    // every request, so a fat-fingered value here is billed on every turn.
-    { min: 100, max: 60_000 },
-  ),
-  memoryInjectionPerSubjectMaxItems: configuredInteger(
-    "memory.injection.perSubjectMaxItems",
-    "JJ_MEMORY_INJECTION_PER_SUBJECT_MAX_ITEMS",
-    6,
-    { min: 1, max: 200 },
-  ),
-  memoryFocusMaxItems: configuredInteger(
-    "memory.injection.focus.maxItems",
-    "JJ_MEMORY_FOCUS_MAX_ITEMS",
-    6,
-    { min: 0, max: 50 },
-  ),
-  memoryFocusMaxChars: configuredInteger(
-    "memory.injection.focus.maxChars",
-    "JJ_MEMORY_FOCUS_MAX_CHARS",
-    1_500,
-    { min: 0, max: 20_000 },
+    12_000,
+    { min: 100, max: 400_000 },
   ),
   // Passive capture is a second, separate switch: enabling memory alone only gives
   // the explicit "remember this" commands.
