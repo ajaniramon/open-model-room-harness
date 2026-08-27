@@ -52,8 +52,10 @@ function render(locale) {
         <a href="#how">${escapeHtml(t.nav.how)}</a>
         <a href="#install">${escapeHtml(t.nav.install)}</a>
         <a href="#security">${escapeHtml(t.nav.security)}</a>
+        <a class="nav-highlight" href="./build-jam.html">Build Jam <span aria-hidden="true">↗</span></a>
       </nav>
       <div class="language-picker">
+        <a class="mobile-jam-link" href="./build-jam.html">Build Jam</a>
         <label for="locale">${escapeHtml(t.languageLabel)}</label>
         <select id="locale" aria-label="${escapeHtml(t.languageLabel)}">
           ${supportedLocales.map((code) => `<option value="${code}" ${code === locale ? "selected" : ""}>${localeNames[code]}</option>`).join("")}
