@@ -22,6 +22,21 @@ function providerLabel(provider) {
   }[provider] || provider;
 }
 
+// Echo a tool-call turn's reasoning back under the same field names the provider
+// used (NanoGPT: `reasoning`; Xiaomi/DeepSeek native: `reasoning_content`;
+// OpenRouter-style: `reasoning_details`). Absent fields are left out, so models
+// that do not reason see an unchanged request shape.
+export function toolTurnReasoning(message) {
+  const echoed = {};
+  for (const field of ["reasoning", "reasoning_content"]) {
+    if (typeof message?.[field] === "string" && message[field]) echoed[field] = message[field];
+  }
+  if (Array.isArray(message?.reasoning_details) && message.reasoning_details.length) {
+    echoed.reasoning_details = message.reasoning_details;
+  }
+  return echoed;
+}
+
 function visibleText(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -378,6 +393,8 @@ export class ModelClient {
         role: "assistant",
         content: message.content || null,
         tool_calls: toolCalls,
+        // Strict local servers may reject unknown message fields.
+        ...(route.provider === "local" ? {} : toolTurnReasoning(message)),
       });
       for (const toolCall of toolCalls) {
         const name = toolCall?.function?.name || "";
@@ -515,10 +532,14 @@ export class ModelClient {
       body.max_tokens = route.maxOutputTokens;
       body.reasoning_effort = route.reasoningEffort;
     }
-    if (route.provider === "nanogpt") body.reasoning = { exclude: true };
     if (activeToolRuntime?.tools?.length) {
       body.tools = activeToolRuntime.tools;
       body.tool_choice = "auto";
+      // Thinking models (MiMo, DeepSeek) expect the reasoning behind a tool call to be
+      // passed back on the next request; without it they lose the thread between
+      // tool iterations. Only content is ever returned to Discord.
+    } else if (route.provider === "nanogpt") {
+      body.reasoning = { exclude: true };
     }
     const headers = { "Content-Type": "application/json" };
     if (route.apiKey) headers.Authorization = `Bearer ${route.apiKey}`;

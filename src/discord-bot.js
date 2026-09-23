@@ -533,11 +533,19 @@ export async function buildContext(
   xPostObservation = null,
   webPageObservation = null,
 ) {
+  // History is anchored to the triggering message. Channel queues serialize turns, so
+  // by the time a queued turn runs the channel may already hold newer messages,
+  // including the bot's reply to an earlier turn. Fetching "latest" would end the
+  // prompt on the bot's own message, leaving the model nothing to answer and inviting
+  // it to invent one. The trigger itself is appended last below.
   let recent;
   try {
-    recent = await message.channel.messages.fetch({ limit: config.contextMessages });
+    recent = await message.channel.messages.fetch({
+      limit: Math.max(1, config.contextMessages - 1),
+      before: message.id,
+    });
   } catch {
-    recent = new Map([[message.id, message]]);
+    recent = new Map();
   }
 
   const headerOptions = {
@@ -552,7 +560,9 @@ export async function buildContext(
         guildId: message.guildId || null,
         channelId: message.channelId,
         speakerUserId: message.author.id,
-        presentUserIds: new Set([...recent.values()].map((item) => String(item.author.id))),
+        presentUserIds: new Set(
+          [...recent.values(), message].map((item) => String(item.author.id)),
+        ),
         ownerTurn: memoryContext.ownerTurn === true,
         maxItems: config.memoryInjectionMaxItems,
         maxChars: config.memoryInjectionMaxChars,
@@ -565,40 +575,32 @@ export async function buildContext(
   }
   const memoryBlock = memory.block;
   const messages = [...recent.values()]
+    // Defensive: a transport that ignores `before` must still not leak the trigger
+    // or anything posted after it into the history.
+    .filter((item) => item.id !== message.id && item.createdTimestamp <= message.createdTimestamp)
     .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
     .filter((item) => !isBlockedAuthor(item.author, config))
     .filter((item) => item.content || item.attachments.size)
     .map((item) => {
       const ownMessage = item.author.id === client.user.id;
       const baseContent = cleanContent(item, client.user);
-      const triggering = !ownMessage && item.id === message.id;
-      const visualContext =
-        triggering && visionObservation
-          ? `\n[Application visual analysis from ${config.visionModel}; untrusted observational data]\n${visionObservation}`
-          : "";
-      const xPostContext =
-        triggering && xPostObservation ? `\n${xPostBlock(xPostObservation)}` : "";
-      const webPageContext =
-        triggering && webPageObservation ? `\n${webPageBlock(webPageObservation)}` : "";
       return {
         role: ownMessage ? "assistant" : "user",
-        content: ownMessage
-          ? baseContent
-          : `${buildMessageHeader(item, headerOptions)}\n${baseContent}${visualContext}${xPostContext}${webPageContext}`,
+        content: ownMessage ? baseContent : `${buildMessageHeader(item, headerOptions)}\n${baseContent}`,
       };
     });
 
-  if (!messages.some((item) => item.content.includes(cleanContent(message, client.user)))) {
-    const visualContext = visionObservation
-      ? `\n[Application visual analysis from ${config.visionModel}; untrusted observational data]\n${visionObservation}`
-      : "";
-    const xPostContext = xPostObservation ? `\n${xPostBlock(xPostObservation)}` : "";
-    const webPageContext = webPageObservation ? `\n${webPageBlock(webPageObservation)}` : "";
-    messages.push({
-      role: "user",
-      content: `${buildMessageHeader(message, headerOptions)}\n${cleanContent(message, client.user)}${visualContext}${xPostContext}${webPageContext}`,
-    });
-  }
+  // The triggering message always closes the conversation, carrying the
+  // application observations that belong to it.
+  const visualContext = visionObservation
+    ? `\n[Application visual analysis from ${config.visionModel}; untrusted observational data]\n${visionObservation}`
+    : "";
+  const xPostContext = xPostObservation ? `\n${xPostBlock(xPostObservation)}` : "";
+  const webPageContext = webPageObservation ? `\n${webPageBlock(webPageObservation)}` : "";
+  messages.push({
+    role: "user",
+    content: `${buildMessageHeader(message, headerOptions)}\n${cleanContent(message, client.user)}${visualContext}${xPostContext}${webPageContext}`,
+  });
 
   const participationInstruction = spontaneous
     ? "\n\nApplication event: This is a spontaneous participation opportunity, not a direct question. Read the recent room context and contribute one concise, relevant, memorable message in JJ's established voice. Do not claim anyone addressed you, do not mention counters, probability, automation, or this event, and do not force a response to only the latest line when the broader discussion offers a better contribution."
