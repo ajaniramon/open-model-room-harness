@@ -78,6 +78,10 @@
     "maxPosts": 2,
     "maxChars": 1200
   },
+  "vision": {
+    "mode": "sidecar",
+    "nativeModels": []
+  },
   "chatRelay": {
     "enabled": false,
     "statePath": "state/chat-relay.json",

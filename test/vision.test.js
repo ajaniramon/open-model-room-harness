@@ -98,3 +98,29 @@ test("rejects oversized images before downloading or calling NanoGPT", async () 
   assert.equal(fetchCalls, 0);
   assert.equal(modelCalls, 0);
 });
+
+test("loadImageParts downloads within limits without calling any model", async () => {
+  const nanoGpt = {
+    async complete() {
+      throw new Error("native vision must not call the sidecar model");
+    },
+  };
+  const fetchImplementation = async () =>
+    new Response(Buffer.from([1, 2, 3]), { status: 200, headers: { "content-type": "image/png" } });
+  const analyzer = new VisionAnalyzer(visionConfig({ visionMaxImages: 1 }), nanoGpt, fetchImplementation);
+
+  assert.equal(await analyzer.loadImageParts(discordMessage([{ name: "a.pdf", contentType: "application/pdf" }])), null);
+  const parts = await analyzer.loadImageParts(
+    discordMessage([
+      { name: "one.png", contentType: "image/png", size: 3, url: "https://cdn.discordapp.com/attachments/test/one.png" },
+      { name: "two.png", contentType: "image/png", size: 3, url: "https://cdn.discordapp.com/attachments/test/two.png" },
+    ]),
+  );
+  assert.deepEqual(parts, [{ type: "image_url", image_url: { url: "data:image/png;base64,AQID" } }]);
+  await assert.rejects(
+    analyzer.loadImageParts(
+      discordMessage([{ name: "big.png", contentType: "image/png", size: 2_000_000, url: "https://cdn.discordapp.com/attachments/test/big.png" }]),
+    ),
+    /exceeds/,
+  );
+});

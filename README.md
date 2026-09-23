@@ -622,6 +622,16 @@ Visual reports and text found inside images are treated as untrusted data.
 The main conversational model receives the visual report and writes the final
 reply in the configured character voice.
 
+If the main chat model is itself multimodal, set `vision.mode` to `native` and
+list its exact model ID (and the fallback model's, if one is configured) in
+`vision.nativeModels` (`JJ_VISION_MODE` / `JJ_VISION_NATIVE_MODELS`). The triggering
+message's images are then attached to the conversation turn directly, within the
+same count and byte limits, and the sidecar call is skipped. Native mode applies
+only to OpenAI-compatible providers (NanoGPT, OpenAI, xAI, local); Anthropic, Gemini,
+escalations, and any model not on the list keep using the sidecar. Earlier images in
+the channel history are never re-sent, and the system message tells the model that
+text inside images is untrusted data.
+
 ## X/Twitter link prefetch
 
 When a message links to a public X/Twitter post, the harness downloads that post

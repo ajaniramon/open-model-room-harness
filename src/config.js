@@ -73,6 +73,14 @@ if (!new Set(["none", "nanogpt", "openai", "anthropic", "xai", "gemini", "local"
 // Opt-in fallback for the default conversation route: when the primary inference
 // call fails after its retry, the turn is repeated once on this route instead of
 // surfacing an error message in Discord. Empty means disabled.
+// "sidecar" (default) inspects images with the vision model and hands the bot a
+// bounded text report; "native" attaches the triggering message's images directly
+// when the chat route's model is listed in vision.nativeModels (see vision.js).
+const visionMode = String(configured("vision.mode", "JJ_VISION_MODE", "sidecar")).trim().toLowerCase();
+if (!new Set(["sidecar", "native"]).has(visionMode)) {
+  throw new Error("vision.mode (JJ_VISION_MODE) must be 'sidecar' or 'native'");
+}
+
 const chatFallbackProvider = process.env.MODEL_FALLBACK_PROVIDER?.trim().toLowerCase() || "";
 if (
   chatFallbackProvider &&
@@ -436,6 +444,8 @@ export const config = Object.freeze({
     min: 128,
     max: 8_192,
   }),
+  visionMode,
+  visionNativeModels: new Set(configuredList("vision.nativeModels", "JJ_VISION_NATIVE_MODELS")),
   xPrefetchEnabled: configuredBoolean("xPrefetch.enabled", "JJ_X_PREFETCH_ENABLED", true),
   xPrefetchMaxPosts: configuredInteger("xPrefetch.maxPosts", "JJ_X_PREFETCH_MAX_POSTS", 2, {
     min: 1,
