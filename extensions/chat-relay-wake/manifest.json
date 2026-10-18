@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Chat Relay Wake Prototype",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Routes Discord relay and autonomous harness work to separate configured ChatGPT tasks.",
   "permissions": [
     "alarms",
@@ -20,6 +20,14 @@
     "service_worker": "background.js",
     "type": "module"
   },
+  "commands": {
+    "send-attested-message": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Y"
+      },
+      "description": "Send the current owner message with attestation"
+    }
+  },
   "content_scripts": [
     {
       "matches": [
@@ -29,7 +37,7 @@
       "js": [
         "content.js"
       ],
-      "run_at": "document_idle"
+      "run_at": "document_start"
     }
   ],
   "action": {

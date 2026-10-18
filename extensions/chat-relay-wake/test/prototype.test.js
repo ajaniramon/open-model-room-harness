@@ -19,21 +19,29 @@ async function read(relativePath) {
   return readFile(join(root, relativePath), "utf8");
 }
 
-test("manifest references files that exist", async () => {
-  const manifest = JSON.parse(await read("manifest.json"));
+test("Chrome and Firefox manifests reference the same shared files", async () => {
+  const [chromeManifest, firefoxManifest] = await Promise.all([
+    read("manifest.json").then(JSON.parse),
+    read("manifest.firefox.json").then(JSON.parse),
+  ]);
   const packageMetadata = JSON.parse(await read("package.json"));
-  assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, packageMetadata.version);
-  assert.equal(manifest.background.service_worker, "background.js");
-
-  const referencedFiles = [
-    manifest.background.service_worker,
-    manifest.action.default_popup,
-    manifest.options_ui.page,
-    ...manifest.content_scripts.flatMap((entry) => entry.js),
-  ];
-
-  await Promise.all(referencedFiles.map((path) => read(path)));
+  for (const manifest of [chromeManifest, firefoxManifest]) {
+    assert.equal(manifest.manifest_version, 3);
+    assert.equal(manifest.version, packageMetadata.version);
+    assert.equal(manifest.content_scripts[0].run_at, "document_start");
+    const referencedFiles = [
+      manifest.background.service_worker,
+      ...(manifest.background.scripts || []),
+      manifest.action.default_popup,
+      manifest.options_ui.page,
+      ...manifest.content_scripts.flatMap((entry) => entry.js),
+    ];
+    await Promise.all([...new Set(referencedFiles)].map((path) => read(path)));
+  }
+  assert.equal(chromeManifest.background.service_worker, "background.js");
+  assert.deepEqual(firefoxManifest.background.scripts, ["background.js"]);
+  assert.equal(firefoxManifest.permissions.includes("tabs"), true);
+  assert.equal(firefoxManifest.browser_specific_settings.gecko.id, "chat-relay-wake@open-model-room-harness.local");
 });
 
 test("popup exposes automatic alarm diagnostics", async () => {
@@ -66,6 +74,32 @@ test("configured task heartbeat supplements throttled Chrome alarms", async () =
   assert.match(background, /fastOnly: true/);
   assert.match(background, /source: "heartbeat"/);
   assert.match(background, /checkInFlight/);
+  assert.match(background, /orchestrationDeliveryInFlight/);
+});
+
+test("wake submission waits for a visible live send control", async () => {
+  const content = await read("content.js");
+  assert.match(content, /function isVisible\(element\)/);
+  assert.match(content, /control\.isConnected && isVisible\(control\)/);
+  assert.match(content, /\[role='button'\]\[aria-label='Send'\]/);
+  assert.match(content, /requestAnimationFrame\(\(\) => requestAnimationFrame/);
+  assert.match(content, /ChatGPT send button was replaced before submission/);
+  assert.match(content, /form\.querySelectorAll\("button\[type='submit'\]"\)/);
+});
+
+test("durable orchestration delivery is generic and disabled by default", async () => {
+  const [background, content, options, markup] = await Promise.all([
+    read("background.js"), read("content.js"), read("options.js"), read("options.html"),
+  ]);
+  assert.match(background, /orchestrationDeliveryEnabled: false/);
+  assert.match(background, /orchestrationDeliveryUrl: ""/);
+  assert.match(background, /\/v1\/browser-delivery\/pull/);
+  assert.match(background, /browserTabId: String\(tabId\)/);
+  assert.match(background, /\/outcome/);
+  assert.match(content, /chat-relay:orchestration-state/);
+  assert.match(content, /chat-relay:orchestration-submit/);
+  assert.match(options, /orchestrationDeliveryToken: form\.orchestrationDeliveryToken\.value/);
+  assert.match(markup, /name="orchestrationDeliveryEnabled"/);
 });
 
 test("fast-lane-only work bypasses the ordinary active-count gate", async () => {
@@ -236,6 +270,27 @@ test("direct owner attestation is limited to trusted submissions on one exact ta
   assert.match(options, /directOwnerEnabled: form\.directOwnerEnabled\.checked/);
   assert.match(markup, /name="ownerTargetUrl"/);
   assert.match(markup, /name="directChatgptToken"/);
+  assert.match(content, /chat-relay:owner-lane-diagnostic/);
+  assert.match(background, /ownerLaneDiagnostic/);
+});
+
+test("browser shortcut submits through the guarded owner attestation path", async () => {
+  const [background, content, chromeManifestSource, firefoxManifestSource] = await Promise.all([
+    read("background.js"),
+    read("content.js"),
+    read("manifest.json"),
+    read("manifest.firefox.json"),
+  ]);
+  for (const manifestSource of [chromeManifestSource, firefoxManifestSource]) {
+    const manifest = JSON.parse(manifestSource);
+    assert.equal(manifest.commands["send-attested-message"].suggested_key.default, "Ctrl+Shift+Y");
+  }
+  assert.match(background, /commands\.onCommand\.addListener/);
+  assert.match(background, /sendAttestedOwnerShortcut\(tab\)/);
+  assert.match(background, /chat-relay:attested-owner-submit/);
+  assert.match(content, /message\?\.type === "chat-relay:attested-owner-submit"/);
+  assert.match(content, /This tab is not the configured owner ChatGPT conversation/);
+  assert.match(content, /waitForSubmission\(taggedComposer, previousUserMessageCount\)/);
 });
 
 test("backoff schedule is normalized and capped", () => {
@@ -265,18 +320,44 @@ test("circuit advances only while the same oldest item remains", () => {
   assert.equal(createWakeCircuitState({ previous: replacement, itemId: "", now: 600_000, schedule: [5] }), null);
 });
 
-test("prototype contains no companion or Discord scope names", async () => {
+test("public variants contain no private deployment names or profiles", async () => {
   const source = await Promise.all([
     read("background.js"),
     read("content.js"),
     read("options.js"),
+    read("options.html"),
     read("popup.js"),
     read("manifest.json"),
+    read("manifest.firefox.json"),
   ]);
   const combined = source.join("\n").toLowerCase();
-  for (const forbidden of ["gremy", "haven", "thirdeye", "guildid", "channelid"]) {
+  for (const forbidden of [
+    "gremy", "golemia", "pust", "gremy-corner", "start-qud-audit", "ghidra",
+    "rogue-trader", "desktop-commander", "haven", "thirdeye", "guildid", "channelid", "3410",
+  ]) {
     assert.equal(combined.includes(forbidden), false, `found hardcoded name: ${forbidden}`);
   }
+});
+
+test("shared scripts use the cross-browser WebExtensions namespace", async () => {
+  const scripts = await Promise.all([
+    read("background.js"),
+    read("content.js"),
+    read("options.js"),
+    read("popup.js"),
+  ]);
+  for (const script of scripts) {
+    assert.match(script, /const extensionApi = globalThis\.browser \?\? globalThis\.chrome;/);
+    assert.doesNotMatch(script, /\bchrome\./);
+  }
+});
+
+test("variant build copies an explicit public source allowlist", async () => {
+  const build = await read("scripts/build-variants.mjs");
+  assert.match(build, /buildVariant\("chrome", "manifest\.json"\)/);
+  assert.match(build, /buildVariant\("firefox", "manifest\.firefox\.json"\)/);
+  assert.match(build, /sharedFiles\.map\(\(file\) => cp\(join\(root, file\), join\(target, file\)\)\)/);
+  assert.doesNotMatch(build, /cp\(root,/);
 });
 
 test("remote harness access is optional", async () => {

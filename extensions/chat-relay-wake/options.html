@@ -74,6 +74,21 @@
           <input id="directOwnerAudiences" name="directOwnerAudiences" type="text" spellcheck="false">
         </label>
 
+        <label class="toggle-row">
+          <span>Enable durable orchestration delivery</span>
+          <input id="orchestrationDeliveryEnabled" name="orchestrationDeliveryEnabled" type="checkbox">
+        </label>
+
+        <label>
+          Orchestration delivery URL
+          <input id="orchestrationDeliveryUrl" name="orchestrationDeliveryUrl" type="url" placeholder="https://orchestrator.example" spellcheck="false">
+        </label>
+
+        <label>
+          Orchestration delivery token
+          <input id="orchestrationDeliveryToken" name="orchestrationDeliveryToken" type="password" autocomplete="off" spellcheck="false">
+        </label>
+
         <div class="two-columns">
           <label>
             Poll interval (minutes)

@@ -1,5 +1,7 @@
 import { DEFAULT_BACKOFF_SCHEDULE, normalizeBackoffSchedule } from "./backoff.js";
 
+const extensionApi = globalThis.browser ?? globalThis.chrome;
+
 const DEFAULTS = {
   enabled: false,
   ownerOnly: false,
@@ -24,6 +26,9 @@ const DEFAULTS = {
   autonomousWakePrompt: "Check and process the pending autonomous opportunity. Claim the authoritative item, inspect its context, and independently decide whether to act or do nothing.",
   autoSubmit: true,
   openIfMissing: false,
+  orchestrationDeliveryEnabled: false,
+  orchestrationDeliveryUrl: "",
+  orchestrationDeliveryToken: "",
 };
 
 const form = document.querySelector("#settings-form");
@@ -35,7 +40,7 @@ function showMessage(text, kind = "success") {
 }
 
 async function loadSettings() {
-  const settings = await chrome.storage.local.get(DEFAULTS);
+  const settings = await extensionApi.storage.local.get(DEFAULTS);
   settings.relayTargetUrl ||= settings.targetUrl;
   for (const [key, value] of Object.entries(settings)) {
     const input = form.elements.namedItem(key);
@@ -69,6 +74,9 @@ function readSettings() {
     autonomousWakePrompt: form.autonomousWakePrompt.value.trim(),
     autoSubmit: form.autoSubmit.checked,
     openIfMissing: form.openIfMissing.checked,
+    orchestrationDeliveryEnabled: form.orchestrationDeliveryEnabled.checked,
+    orchestrationDeliveryUrl: form.orchestrationDeliveryUrl.value.trim(),
+    orchestrationDeliveryToken: form.orchestrationDeliveryToken.value.trim(),
   };
 }
 
@@ -79,7 +87,7 @@ async function requestHarnessPermission(statusUrl) {
     throw new Error("Remote harness status URLs must use HTTPS");
   }
   if (loopback) return true;
-  return chrome.permissions.request({ origins: [`${url.origin}/*`] });
+  return extensionApi.permissions.request({ origins: [`${url.origin}/*`] });
 }
 
 function apiUrlFromStatusUrl(statusUrl, path) {
@@ -90,14 +98,14 @@ function apiUrlFromStatusUrl(statusUrl, path) {
   return url;
 }
 
-async function requestServicePermission(serviceUrl) {
+async function requestServicePermission(serviceUrl, label = "service") {
   const url = new URL(serviceUrl);
   const loopback = ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
   if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
-    throw new Error("Remote broker URLs must use HTTPS");
+    throw new Error(`Remote ${label} URLs must use HTTPS`);
   }
   if (loopback) return true;
-  return chrome.permissions.request({ origins: [`${url.origin}/*`] });
+  return extensionApi.permissions.request({ origins: [`${url.origin}/*`] });
 }
 
 async function saveSettings() {
@@ -127,13 +135,20 @@ async function saveSettings() {
     if (settings.directOwnerAudiences.length === 0 || settings.directOwnerAudiences.some((value) => !allowedAudiences.has(value))) {
       throw new Error("Direct owner audiences may contain only filesystem, execution, and discord");
     }
-    if (!(await requestServicePermission(settings.brokerUrl))) {
+    if (!(await requestServicePermission(settings.brokerUrl, "broker"))) {
       throw new Error("Permission to contact the capability broker was not granted");
+    }
+  }
+  if (settings.orchestrationDeliveryEnabled) {
+    if (!settings.orchestrationDeliveryUrl) throw new Error("An orchestration delivery URL is required");
+    if (!settings.orchestrationDeliveryToken) throw new Error("An orchestration delivery token is required");
+    if (!(await requestServicePermission(settings.orchestrationDeliveryUrl, "orchestration delivery"))) {
+      throw new Error("Permission to contact the orchestration delivery service was not granted");
     }
   }
   const permissionGranted = await requestHarnessPermission(settings.statusUrl);
   if (!permissionGranted) throw new Error("Permission to contact the harness URL was not granted");
-  await chrome.storage.local.set(settings);
+  await extensionApi.storage.local.set(settings);
   return settings;
 }
 
@@ -151,7 +166,7 @@ document.querySelector("#test").addEventListener("click", async () => {
   try {
     await saveSettings();
     showMessage("Checking harness...");
-    const status = await chrome.runtime.sendMessage({ type: "chat-relay:check-now", force: true });
+    const status = await extensionApi.runtime.sendMessage({ type: "chat-relay:check-now", force: true });
     showMessage(status?.message || "Check completed.", status?.state === "error" ? "error" : "success");
   } catch (error) {
     showMessage(error instanceof Error ? error.message : String(error), "error");

@@ -1,3 +1,4 @@
+const extensionApi = globalThis.browser ?? globalThis.chrome;
 function formatTime(timestamp) {
   return timestamp ? new Date(timestamp).toLocaleTimeString() : "-";
 }
@@ -17,13 +18,34 @@ function render(status = {}) {
   document.querySelector("#next").textContent = formatTime(status.nextAlarmAt);
   document.querySelector("#retry").textContent = formatTime(status.backoffUntil);
   document.querySelector("#attempts").textContent = Number(status.unresolvedAttempts || 0);
+  const ownerDiagnostic = status.ownerLaneDiagnostic;
+  document.querySelector("#owner-lane").textContent = ownerDiagnostic
+    ? `${ownerDiagnostic.state} ${JSON.stringify(ownerDiagnostic.details || {})}`
+    : "-";
 }
 
 document.querySelector("#check").addEventListener("click", async () => {
   document.querySelector("#status").textContent = "Checking...";
-  render(await chrome.runtime.sendMessage({ type: "chat-relay:check-now" }));
+  render(await extensionApi.runtime.sendMessage({ type: "chat-relay:check-now" }));
 });
 
-document.querySelector("#settings").addEventListener("click", () => chrome.runtime.openOptionsPage());
+async function openSettingsPage() {
+  if (typeof extensionApi.runtime.openOptionsPage === "function") {
+    try {
+      await extensionApi.runtime.openOptionsPage();
+      return;
+    } catch {
+      // Temporary Firefox add-ons may not surface the options UI consistently.
+    }
+  }
+  const url = extensionApi.runtime.getURL("options.html");
+  globalThis.open(url, "_blank", "noopener");
+}
 
-chrome.runtime.sendMessage({ type: "chat-relay:get-status" }).then(render);
+document.querySelector("#settings").addEventListener("click", () => {
+  openSettingsPage().catch((error) => {
+    document.querySelector("#status").textContent = error instanceof Error ? error.message : String(error);
+  });
+});
+
+extensionApi.runtime.sendMessage({ type: "chat-relay:get-status" }).then(render);

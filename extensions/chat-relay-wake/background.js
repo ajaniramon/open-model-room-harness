@@ -7,8 +7,11 @@ import {
 import { buildRelayWakePrompt } from "./wake-prompt.js";
 import { normalizeRelayStatus, relayForFastLane, targetUrlForRelay, wakePromptForRelay } from "./relay-status.js";
 
+const extensionApi = globalThis.browser ?? globalThis.chrome;
+
 const ALARM_NAME = "chat-relay-wake-poll";
 let checkInFlight = null;
+let orchestrationDeliveryInFlight = null;
 
 const DEFAULTS = {
   enabled: false,
@@ -35,6 +38,9 @@ const DEFAULTS = {
   autonomousWakePrompt: "Check and process the pending autonomous opportunity. Claim the authoritative item, inspect its context, and independently decide whether to act or do nothing.",
   autoSubmit: true,
   openIfMissing: false,
+  orchestrationDeliveryEnabled: false,
+  orchestrationDeliveryUrl: "",
+  orchestrationDeliveryToken: "",
 };
 
 const runtimeStatus = {
@@ -64,7 +70,7 @@ function clampNumber(value, minimum, maximum, fallback) {
 }
 
 async function getSettings() {
-  const stored = await chrome.storage.local.get(DEFAULTS);
+  const stored = await extensionApi.storage.local.get(DEFAULTS);
   return {
     ...DEFAULTS,
     ...stored,
@@ -91,23 +97,35 @@ function normalizedTaskUrl(value) {
   }
 }
 
+function conversationKey(value) {
+  try {
+    const url = new URL(value);
+    const match = url.pathname.match(/\/c\/([^/]+)\/?$/);
+    if (!match) return "";
+    const host = url.hostname === "chat.openai.com" ? "chatgpt.com" : url.hostname;
+    return `${host}:c:${match[1]}`;
+  } catch {
+    return "";
+  }
+}
+
 function updateRuntimeStatus(patch) {
   Object.assign(runtimeStatus, patch);
-  chrome.storage.local.set({ wakeRuntimeStatus: runtimeStatus }).catch(() => {});
+  extensionApi.storage.local.set({ wakeRuntimeStatus: runtimeStatus }).catch(() => {});
 }
 
 async function configureAlarm() {
   const settings = await getSettings();
-  await chrome.alarms.clear(ALARM_NAME);
+  await extensionApi.alarms.clear(ALARM_NAME);
   if (!settings.enabled) {
     updateRuntimeStatus({ nextAlarmAt: null });
     return;
   }
-  chrome.alarms.create(ALARM_NAME, {
+  extensionApi.alarms.create(ALARM_NAME, {
     delayInMinutes: 0.5,
     periodInMinutes: settings.pollMinutes,
   });
-  const alarm = await chrome.alarms.get(ALARM_NAME);
+  const alarm = await extensionApi.alarms.get(ALARM_NAME);
   if (!alarm) throw new Error("Chrome did not create the automatic relay alarm");
   updateRuntimeStatus({ nextAlarmAt: alarm.scheduledTime || null });
 }
@@ -198,48 +216,57 @@ async function attestOwnerMessage(settings, sender, messageText) {
   return { status: "attested", eventRef: String(payload.eventRef), expiresAt: payload.expiresAt || null };
 }
 
-async function findTargetTab(targetUrl) {
-  const normalizedTarget = normalizedTaskUrl(targetUrl);
-  if (!normalizedTarget) return null;
+async function findTargetTabs(targetUrl) {
+  const targetKey = conversationKey(targetUrl);
+  if (!targetKey) return [];
 
-  const target = new URL(normalizedTarget);
-  const tabs = await chrome.tabs.query({ url: `${target.origin}/*` });
-  return tabs.find((tab) => normalizedTaskUrl(tab.url || "") === normalizedTarget) || null;
+  const tabs = await extensionApi.tabs.query({
+    url: ["https://chatgpt.com/*", "https://chat.openai.com/*"],
+  });
+  return tabs
+    .filter((tab) => conversationKey(tab.url || "") === targetKey)
+    .sort((left, right) => {
+      if (Boolean(left.discarded) !== Boolean(right.discarded)) return left.discarded ? 1 : -1;
+      return Number(right.lastAccessed || 0) - Number(left.lastAccessed || 0);
+    });
 }
 
 async function wakeTarget(settings, targetUrl, reason, prompt = settings.wakePrompt, promptOptions = {}) {
-  let tab = await findTargetTab(targetUrl);
+  let tabs = await findTargetTabs(targetUrl);
 
-  if (!tab && settings.openIfMissing) {
-    tab = await chrome.tabs.create({ url: targetUrl, active: false });
+  if (tabs.length === 0 && settings.openIfMissing) {
+    const tab = await extensionApi.tabs.create({ url: targetUrl, active: false });
     await new Promise((resolve) => setTimeout(resolve, 2500));
+    tabs = tab?.id ? [tab] : [];
   }
 
-  if (!tab?.id) {
+  if (tabs.length === 0) {
     return { status: "deferred", reason: "Configured ChatGPT task is not open" };
   }
 
-  try {
-    return await chrome.tabs.sendMessage(tab.id, {
-      type: "chat-relay:wake",
-      payload: {
-        prompt: buildRelayWakePrompt(prompt, promptOptions),
-        autoSubmit: settings.autoSubmit,
-        reason,
-      },
-    });
-  } catch (error) {
-    return {
-      status: "deferred",
-      reason: `ChatGPT content script unavailable: ${error instanceof Error ? error.message : String(error)}`,
-    };
+  let unavailableReason = "ChatGPT content script unavailable";
+  for (const tab of tabs) {
+    if (!tab.id) continue;
+    try {
+      return await extensionApi.tabs.sendMessage(tab.id, {
+        type: "chat-relay:wake",
+        payload: {
+          prompt: buildRelayWakePrompt(prompt, promptOptions),
+          autoSubmit: settings.autoSubmit,
+          reason,
+        },
+      });
+    } catch (error) {
+      unavailableReason = `ChatGPT content script unavailable: ${error instanceof Error ? error.message : String(error)}`;
+    }
   }
+  return { status: "deferred", reason: unavailableReason };
 }
 
 async function checkRelay({ force = false, source = "manual", fastOnly = false } = {}) {
   const settings = await getSettings();
   const checkedAt = Date.now();
-  const alarm = await chrome.alarms.get(ALARM_NAME);
+  const alarm = await extensionApi.alarms.get(ALARM_NAME);
   updateRuntimeStatus({
     checkedAt,
     ownerOnly: settings.ownerOnly,
@@ -272,7 +299,7 @@ async function checkRelay({ force = false, source = "manual", fastOnly = false }
 
     const selectedActiveCount = fastOnly ? relay.fastLaneActiveCount : relay.activeCount;
     if (!relay.enabled || selectedActiveCount === 0) {
-      await chrome.storage.local.remove("wakeCircuitState");
+      await extensionApi.storage.local.remove("wakeCircuitState");
       updateRuntimeStatus({
         state: "idle",
         message: relay.enabled ? "No pending relay work" : "Harness relay is disabled",
@@ -301,11 +328,11 @@ async function checkRelay({ force = false, source = "manual", fastOnly = false }
 
     const lastWakeKey = fastOnly ? "fastLaneLastWakeAt" : "lastWakeAt";
     const circuitKey = fastOnly ? "fastLaneWakeCircuitState" : "wakeCircuitState";
-    const stored = await chrome.storage.local.get({ [lastWakeKey]: 0, [circuitKey]: null });
+    const stored = await extensionApi.storage.local.get({ [lastWakeKey]: 0, [circuitKey]: null });
     const savedCircuit = stored[circuitKey];
     const circuit = activeCircuitForItem(savedCircuit, selectedRelay.oldestActiveId);
     if (!circuit && savedCircuit) {
-      await chrome.storage.local.remove(circuitKey);
+      await extensionApi.storage.local.remove(circuitKey);
       updateRuntimeStatus({ unresolvedAttempts: 0, backoffUntil: null });
     }
 
@@ -364,7 +391,7 @@ async function checkRelay({ force = false, source = "manual", fastOnly = false }
         schedule: settings.backoffScheduleMinutes,
       });
       const backoffUntil = wakeCircuitState?.backoffUntil || null;
-      await chrome.storage.local.set({ [lastWakeKey]: lastWakeAt, [circuitKey]: wakeCircuitState });
+      await extensionApi.storage.local.set({ [lastWakeKey]: lastWakeAt, [circuitKey]: wakeCircuitState });
       updateRuntimeStatus({
         state: result.status,
         message: result.status === "submitted"
@@ -408,11 +435,11 @@ async function handleTargetHeartbeat(sender) {
   }
 
   const now = Date.now();
-  const stored = await chrome.storage.local.get({ lastHeartbeatCheckAt: 0, lastFastLaneHeartbeatCheckAt: 0 });
+  const stored = await extensionApi.storage.local.get({ lastHeartbeatCheckAt: 0, lastFastLaneHeartbeatCheckAt: 0 });
   if (settings.fastLaneEnabled) {
     const fastLaneIntervalMs = settings.fastLanePollSeconds * 1000;
     if (now - Number(stored.lastFastLaneHeartbeatCheckAt || 0) >= fastLaneIntervalMs) {
-      await chrome.storage.local.set({ lastFastLaneHeartbeatCheckAt: now });
+      await extensionApi.storage.local.set({ lastFastLaneHeartbeatCheckAt: now });
       return runRelayCheck({ source: "fast-lane-heartbeat", fastOnly: true });
     }
   }
@@ -422,19 +449,104 @@ async function handleTargetHeartbeat(sender) {
 
   // Reserve this interval before the asynchronous fetch so duplicate task tabs
   // cannot start the same poll concurrently.
-  await chrome.storage.local.set({ lastHeartbeatCheckAt: now });
+  await extensionApi.storage.local.set({ lastHeartbeatCheckAt: now });
   return runRelayCheck({ source: "heartbeat" });
 }
 
-chrome.runtime.onInstalled.addListener(() => {
+async function postOrchestrationDelivery(settings, path, body) {
+  const baseUrl = validatedServiceUrl(settings.orchestrationDeliveryUrl, "orchestration delivery");
+  const url = new URL(path, baseUrl);
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      authorization: `Bearer ${settings.orchestrationDeliveryToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+    cache: "no-store",
+    redirect: "error",
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload?.ok !== true) {
+    throw new Error(payload?.error || `Orchestration delivery returned HTTP ${response.status}`);
+  }
+  return payload;
+}
+
+async function deliverOrchestrationWork(sender) {
+  const settings = await getSettings();
+  if (!settings.orchestrationDeliveryEnabled) return { status: "disabled" };
+  if (!settings.orchestrationDeliveryUrl || !settings.orchestrationDeliveryToken) {
+    return { status: "configuration", reason: "Orchestration delivery is not configured" };
+  }
+  const tabId = sender?.tab?.id;
+  if (typeof tabId !== "number") return { status: "deferred", reason: "Browser tab identity is unavailable" };
+
+  const page = await extensionApi.tabs.sendMessage(tabId, { type: "chat-relay:orchestration-state" });
+  const turnEvents = Array.isArray(page?.turnEvents) ? page.turnEvents : [];
+  if (turnEvents.length > 0) {
+    const accepted = await postOrchestrationDelivery(settings, "/v1/browser-turns", {
+      observedUrl: page?.observedUrl,
+      browserTabId: String(tabId),
+      events: turnEvents,
+    });
+    if (accepted.status === "accepted") {
+      await extensionApi.tabs.sendMessage(tabId, {
+        type: "chat-relay:orchestration-turn-events-ack",
+        eventIds: accepted.results.map((result) => result.eventId),
+      });
+    }
+  }
+
+  const pull = await postOrchestrationDelivery(settings, "/v1/browser-delivery/pull", {
+    observedUrl: page?.observedUrl,
+    browserTabId: String(tabId),
+    ready: page?.ready === true,
+    busy: page?.busy === true,
+    hasDraft: page?.hasDraft === true,
+  });
+  if (pull.status !== "reserved") return pull;
+
+  let outcome;
+  try {
+    const submission = await extensionApi.tabs.sendMessage(tabId, {
+      type: "chat-relay:orchestration-submit",
+      payload: { prompt: pull.input.body },
+    });
+    outcome = submission?.status === "submitted"
+      ? { status: "submitted", evidence: { browserSubmissionConfirmed: true } }
+      : submission?.status === "deferred" || submission?.status === "failed"
+        ? { status: "failed", reason: submission.reason || "browser did not submit" }
+        : { status: "unknown", reason: "browser returned an unrecognized submission result" };
+  } catch (error) {
+    outcome = { status: "unknown", reason: error instanceof Error ? error.message : String(error) };
+  }
+
+  return postOrchestrationDelivery(
+    settings,
+    `/v1/browser-delivery/attempts/${encodeURIComponent(pull.attemptId)}/outcome`,
+    { observedUrl: page.observedUrl, browserTabId: String(tabId), ...outcome },
+  );
+}
+
+function runOrchestrationDelivery(sender) {
+  if (orchestrationDeliveryInFlight) return orchestrationDeliveryInFlight;
+  orchestrationDeliveryInFlight = deliverOrchestrationWork(sender).finally(() => {
+    orchestrationDeliveryInFlight = null;
+  });
+  return orchestrationDeliveryInFlight;
+}
+
+extensionApi.runtime.onInstalled.addListener(() => {
   configureAlarm().catch(reportAlarmConfigurationError);
 });
 
-chrome.runtime.onStartup.addListener(() => {
+extensionApi.runtime.onStartup.addListener(() => {
   configureAlarm().catch(reportAlarmConfigurationError);
 });
 
-chrome.alarms.onAlarm.addListener((alarm) => {
+extensionApi.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM_NAME) {
     runRelayCheck({ source: "alarm" }).catch((error) =>
       updateRuntimeStatus({
@@ -445,26 +557,50 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   }
 });
 
-chrome.storage.onChanged.addListener((changes, areaName) => {
+extensionApi.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== "local") return;
   if (Object.keys(changes).some((key) => key in DEFAULTS)) {
     configureAlarm().catch(reportAlarmConfigurationError);
   }
 });
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+async function sendAttestedOwnerShortcut(commandTab) {
+  const tab = commandTab?.id
+    ? commandTab
+    : (await extensionApi.tabs.query({ active: true, lastFocusedWindow: true }))[0];
+  if (!tab?.id) throw new Error("The active browser tab could not be identified");
+  return extensionApi.tabs.sendMessage(tab.id, { type: "chat-relay:attested-owner-submit" });
+}
+
+extensionApi.commands.onCommand.addListener((command, tab) => {
+  if (command !== "send-attested-message") return;
+  sendAttestedOwnerShortcut(tab).catch((error) => console.warn("Attested owner shortcut failed", error));
+});
+
+extensionApi.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "chat-relay:check-now") {
     runRelayCheck({ force: Boolean(message.force), source: message.force ? "force" : "manual" }).then(sendResponse);
     return true;
   }
   if (message?.type === "chat-relay:heartbeat") {
-    handleTargetHeartbeat(sender).then(sendResponse).catch((error) =>
-      sendResponse({ state: "error", message: error instanceof Error ? error.message : String(error) }),
-    );
+    Promise.all([handleTargetHeartbeat(sender), runOrchestrationDelivery(sender)])
+      .then(([relay, orchestration]) => sendResponse({ ...relay, orchestration }))
+      .catch((error) => sendResponse({ state: "error", message: error instanceof Error ? error.message : String(error) }));
     return true;
   }
   if (message?.type === "chat-relay:get-status") {
-    chrome.storage.local.get({ wakeRuntimeStatus: runtimeStatus }).then(({ wakeRuntimeStatus }) => sendResponse(wakeRuntimeStatus));
+    extensionApi.storage.local.get({ wakeRuntimeStatus: runtimeStatus, ownerLaneDiagnostic: null })
+      .then(({ wakeRuntimeStatus, ownerLaneDiagnostic }) => sendResponse({ ...wakeRuntimeStatus, ownerLaneDiagnostic }));
+    return true;
+  }
+  if (message?.type === "chat-relay:owner-lane-diagnostic") {
+    extensionApi.storage.local.set({
+      ownerLaneDiagnostic: {
+        state: String(message.state || "unknown"),
+        details: message.details && typeof message.details === "object" ? message.details : {},
+        observedAt: Date.now(),
+      },
+    }).then(() => sendResponse({ ok: true }));
     return true;
   }
   if (message?.type === "chat-relay:attest-owner-message") {

@@ -1,6 +1,6 @@
 # Chat Relay Wake Prototype
 
-A small, build-free Manifest V3 extension that routes Discord relay and autonomous work to separate ChatGPT tasks. It can also attest real user submissions in one exact owner task without exposing broker signing material to ChatGPT.
+A small Manifest V3 extension that routes Discord relay and autonomous work to separate ChatGPT tasks. Chrome and Firefox now use the same source files, with a browser-specific manifest for each build. It can also attest real user submissions in one exact owner task without exposing broker signing material to ChatGPT.
 
 This is intentionally a wake mechanism, not another relay implementation. The harness remains responsible for durable queueing, leases, retries, Discord context, and reply delivery. ChatGPT remains responsible for claiming and completing relay items through its existing MCP connector.
 
@@ -16,19 +16,37 @@ Discord message
   -> harness sends the response to Discord
 ```
 
-## Load the prototype
+## Build and load
+
+The source tree is shared. `manifest.json` is the Chrome manifest and
+`manifest.firefox.json` is the Firefox manifest. Build both loadable variants with:
+
+```powershell
+npm run build
+```
+
+No package installation is required; the build and tests use only Node.js built-ins.
+
+For Chrome:
 
 1. Open `chrome://extensions`.
 2. Enable Developer mode.
 3. Choose Load unpacked.
-4. Select this folder.
-5. Open the extension settings and configure the harness URL, dedicated wake status token, and exact Discord relay task URL.
-6. Optionally configure a separate autonomous task URL.
-7. To attest manual owner turns, configure the exact owner task URL, broker URL, and dedicated direct-ChatGPT ingress token.
+4. Select `dist/chrome`.
 
-No `npm install` or build step is required.
+For Firefox:
 
-Optional validation uses only Node's built-in test runner:
+1. Open `about:debugging#/runtime/this-firefox`.
+2. Choose Load Temporary Add-on.
+3. Select `dist/firefox/manifest.json`.
+
+Then, in either browser:
+
+1. Open the extension settings and configure the harness URL, dedicated wake status token, and exact Discord relay task URL.
+2. Optionally configure a separate autonomous task URL.
+3. To attest manual owner turns, configure the exact owner task URL, broker URL, and dedicated direct-ChatGPT ingress token.
+
+Validation uses only Node's built-in test runner:
 
 ```powershell
 npm run check
@@ -42,6 +60,7 @@ npm test
 - Can check a fast lane for direct priority relay items on the configured task
   heartbeat without exposing content or bypassing exact item claims.
 - Attests owner authority only for trusted click/Enter submissions on one exact owner task URL.
+- Provides `Ctrl+Shift+Y` as an explicit owner-attested submit shortcut.
 - Keeps the direct ingress token in extension storage and sends only an opaque event reference into ChatGPT.
 - Automated wake submissions cannot call the direct-owner attestation path.
 - Refuses to overwrite an unsent draft.
@@ -61,6 +80,7 @@ npm test
 - Does not claim relay work itself.
 - Requests access to non-local harness origins only when the user saves that origin.
 - Sends credentials only to HTTPS origins, except for local loopback development.
+- Keeps optional durable browser-orchestration delivery disabled until a user supplies its URL and dedicated token.
 
 ## Harness contract
 
@@ -114,6 +134,20 @@ grants to the browser or model.
 The owner, relay, and autonomous conversation URLs should be distinct. Relay wake
 automation never targets the owner conversation, and synthetic clicks cannot invoke
 the trusted-submission handler.
+
+If ChatGPT's send control changes or normal interception is unavailable, use
+`Ctrl+Shift+Y` to submit the current owner-conversation draft through the same
+guarded attestation path. The shortcut does not broaden the configured task or
+audience checks.
+
+## Optional durable orchestration delivery
+
+The extension can exchange browser-ready state, observed turn events, reserved
+work, and submission outcomes with a separately configured orchestration service.
+This integration is generic and disabled by default. It requires an explicit URL,
+a dedicated token, and permission for that origin. No deployment-specific job
+profiles, project names, or private service audiences are built into this public
+extension.
 
 The IDs are opaque. Active counts include both pending and leased items so claiming
 work does not reset the unresolved-item circuit. The endpoint accepts only the
@@ -179,6 +213,7 @@ extension.
 - No reverse-engineered ChatGPT API calls.
 - No personality or system prompt.
 - No automatic tab activation.
+- No deployment-specific audit commands or private orchestration profiles.
 
 This prototype uses DOM interaction only for the missing wake step. Once awake, the normal ChatGPT connector and harness relay tools take over.
 
@@ -195,3 +230,5 @@ a successful lease. Explicit `claimed`, `already_claimed`, `not_pending`, and
 empty-peek states keep queue state observable without processing unleased work.
 No-reply decisions use `complete_chat_relay_without_reply` rather than the legacy
 dismissal tool.
+
+Browser reconciliation and unified variant packaging: Codex (OpenAI).
