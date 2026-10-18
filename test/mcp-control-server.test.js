@@ -6,6 +6,24 @@ import test from "node:test";
 import { ChannelType } from "discord.js";
 import { startMcpControlServer } from "../src/mcp-control-server.js";
 
+function tinyWav() {
+  const bytes = Buffer.alloc(44);
+  bytes.write("RIFF", 0, "ascii");
+  bytes.writeUInt32LE(36, 4);
+  bytes.write("WAVE", 8, "ascii");
+  bytes.write("fmt ", 12, "ascii");
+  bytes.writeUInt32LE(16, 16);
+  bytes.writeUInt16LE(1, 20);
+  bytes.writeUInt16LE(1, 22);
+  bytes.writeUInt32LE(8_000, 24);
+  bytes.writeUInt32LE(16_000, 28);
+  bytes.writeUInt16LE(2, 32);
+  bytes.writeUInt16LE(16, 34);
+  bytes.write("data", 36, "ascii");
+  bytes.writeUInt32LE(0, 40);
+  return bytes;
+}
+
 function createTestServer(overrides = {}) {
   return startMcpControlServer({
     config: {
@@ -62,6 +80,27 @@ async function callTool(port, name, args = {}) {
   return JSON.parse(line.slice("data: ".length));
 }
 
+async function listTools(port) {
+  const response = await fetch(`http://127.0.0.1:${port}/sse?access_token=secret-token`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+      params: {},
+    }),
+  });
+  assert.equal(response.status, 200);
+  const body = await response.text();
+  const line = body.split("\n").find((entry) => entry.startsWith("data: "));
+  assert.ok(line, `expected SSE data line in ${body}`);
+  return JSON.parse(line.slice("data: ".length)).result.tools;
+}
+
 test("MCP control server requires bearer auth", async () => {
   const server = createTestServer();
   try {
@@ -99,17 +138,32 @@ test("MCP control server can authorize SSE sessions with a URL token", async () 
 });
 
 test("MCP control server exposes authenticated chat relay wake status", async () => {
+  const wakeStatusCalls = [];
   const chatRelay = {
     enabled: true,
-    wakeStatus: () => ({
+    wakeStatus: (options) => {
+      wakeStatusCalls.push(options);
+      return ({
       pendingCount: 1,
+      directPendingCount: 0,
+      spontaneousPendingCount: 1,
+      autonomousPendingCount: 0,
+      fastLanePendingCount: 0,
+      fastLaneActiveCount: 0,
       leasedCount: 1,
       activeCount: 2,
       pendingKey: "relay-2",
       activeKey: "relay-1,relay-2",
       oldestPendingId: "relay-2",
+      oldestPendingKind: "spontaneous",
       oldestActiveId: "relay-1",
-    }),
+      fastLanePendingKey: "",
+      fastLaneActiveKey: "",
+      oldestFastLanePendingId: null,
+      oldestFastLanePendingKind: null,
+      oldestFastLaneActiveId: null,
+      });
+    },
   };
   const server = createTestServer({ chatRelay });
   try {
@@ -132,13 +186,71 @@ test("MCP control server exposes authenticated chat relay wake status", async ()
     assert.deepEqual(await accepted.json(), {
       enabled: true,
       pendingCount: 1,
+      directPendingCount: 0,
+      spontaneousPendingCount: 1,
+      autonomousPendingCount: 0,
+      fastLanePendingCount: 0,
+      fastLaneActiveCount: 0,
       leasedCount: 1,
       activeCount: 2,
       pendingKey: "relay-2",
       activeKey: "relay-1,relay-2",
       oldestPendingId: "relay-2",
+      oldestPendingKind: "spontaneous",
       oldestActiveId: "relay-1",
+      fastLanePendingKey: "",
+      fastLaneActiveKey: "",
+      oldestFastLanePendingId: null,
+      oldestFastLanePendingKind: null,
+      oldestFastLaneActiveId: null,
     });
+    assert.deepEqual(wakeStatusCalls, [{ ownerOnly: false }]);
+
+    const ownerOnly = await fetch(`${url}?ownerOnly=true`, {
+      headers: { authorization: "Bearer wake-token" },
+    });
+    assert.equal(ownerOnly.status, 200);
+    assert.deepEqual(wakeStatusCalls, [{ ownerOnly: false }, { ownerOnly: true }]);
+  } finally {
+    await server.close();
+  }
+});
+
+test("MCP control server exposes authenticated relay queue flush for the wake panel", async () => {
+  const calls = [];
+  const chatRelay = {
+    enabled: true,
+    flushQueue: async (options) => {
+      calls.push(options);
+      return { ok: true, removed: 3, includeLeased: options.includeLeased };
+    },
+  };
+  const server = createTestServer({ chatRelay });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const { port } = server.address();
+    const url = `http://127.0.0.1:${port}/api/chat-relay/flush`;
+
+    const rejected = await fetch(url, { method: "POST" });
+    assert.equal(rejected.status, 401);
+
+    const adminTokenRejected = await fetch(url, {
+      method: "POST",
+      headers: { authorization: "Bearer secret-token" },
+    });
+    assert.equal(adminTokenRejected.status, 401);
+
+    const accepted = await fetch(url, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer wake-token",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ reason: "clear jam", includeLeased: true }),
+    });
+    assert.equal(accepted.status, 200);
+    assert.deepEqual(await accepted.json(), { ok: true, removed: 3, includeLeased: true });
+    assert.deepEqual(calls, [{ reason: "clear jam", includeLeased: true }]);
   } finally {
     await server.close();
   }
@@ -367,6 +479,7 @@ test("MCP control server exposes safe capability status", async () => {
       codexExecutable: "codex",
       ownerUserIds: new Set(["owner-1"]),
       ownerUsernames: new Set(),
+      allowedGuildIds: new Set(["guild-1"]),
       allowedChannelIds: new Set(["channel-1", "channel-2"]),
       webAllowedUserIds: new Set(),
       webAllowedUsernames: new Set(["owner"]),
@@ -399,6 +512,7 @@ test("MCP control server exposes safe capability status", async () => {
     assert.equal(payload.tools.imageConfigured, false);
     assert.equal(payload.tools.codexConfigured, true);
     assert.equal(payload.permissions.owners, 1);
+    assert.equal(payload.permissions.allowedGuilds, 1);
     assert.equal(payload.permissions.allowedChannels, 2);
     assert.equal(payload.memory.activeRecords, 0);
     assert.equal(payload.discord.emojiPaletteSize, 2);
@@ -620,6 +734,43 @@ test("MCP control server creates scopes and sends only inside them", async () =>
   }
 });
 
+test("MCP control server attachment tools", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mcp-attachment-"));
+  const configPath = join(directory, "config.json");
+  const sent = [];
+  const channel = {
+    id: "channel-1", name: "files", type: ChannelType.GuildText, guildId: "guild-1", parentId: null,
+    permissionsFor: () => ({ has: () => true }),
+    send: async (payload) => { sent.push(payload); return { id: "message-1" }; },
+  };
+  const channels = new Map([["channel-1", channel]]);
+  const discordClient = {
+    isReady: () => true, user: { id: "bot-1", username: "bot", tag: "bot#0001" },
+    guilds: { cache: new Map() }, users: { cache: new Map(), fetch: async () => null },
+    channels: { cache: channels, fetch: async (id) => channels.get(id) || null },
+  };
+  const server = createTestServer({ config: { configPath, discordScopes: {} }, discordClient });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const { port } = server.address();
+    await callTool(port, "set_discord_scope", { scope: "publicFiles", label: "Public Files", guildIds: ["guild-1"], channelIds: ["channel-1"], allowSend: true });
+    const payload = Buffer.from("hello attachment", "utf8");
+    const accepted = JSON.parse((await callTool(port, "send_scoped_discord_attachment", { scope: "publicFiles", filename: "note.txt", dataBase64: payload.toString("base64"), message: "file" })).result.content[0].text);
+    assert.equal(accepted.ok, true);
+    assert.equal(sent[0].content, "file");
+    assert.equal(sent[0].files[0].name, "note.txt");
+    assert.deepEqual(sent[0].files[0].attachment, payload);
+    const badBase64 = JSON.parse((await callTool(port, "send_scoped_discord_attachment", { scope: "publicFiles", filename: "bad.txt", dataBase64: "%%%%" })).result.content[0].text);
+    assert.equal(badBase64.ok, false);
+    const badPath = JSON.parse((await callTool(port, "send_scoped_discord_attachment", { scope: "publicFiles", filename: "../bad.txt", dataBase64: payload.toString("base64") })).result.content[0].text);
+    assert.equal(badPath.ok, false);
+    assert.equal(sent.length, 1);
+
+  } finally {
+    await server.close();
+  }
+});
+
 test("MCP control server exposes an authenticated Discord scope editor API", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mcp-scope-panel-"));
   const configPath = join(directory, "config.json");
@@ -705,19 +856,25 @@ test("MCP control server exposes tool discovery metadata", async () => {
         includeArguments: true,
       })).result.content[0].text,
     );
-    assert.equal(discovered.total, 8);
+    assert.equal(discovered.total, 14);
     assert.ok(discovered.categories.includes("discovery"));
     assert.deepEqual(
       discovered.tools.map((tool) => tool.name),
       [
         "get_pending_chat_relay",
+        "peek_chat_relay_item",
+        "claim_chat_relay_item",
         "claim_chat_relay_items",
         "get_chat_relay_item",
         "get_chat_relay_attachment",
+        "get_chat_relay_text_attachment",
+        "get_chat_relay_audio_attachment",
         "submit_chat_relay_reply",
         "renew_chat_relay_lease",
         "complete_chat_relay_item",
+        "complete_chat_relay_without_reply",
         "dismiss_chat_relay_item",
+        "flush_chat_relay_queue",
       ],
     );
     assert.equal(discovered.tools[0].arguments.includeContext, "When true, include compacted Discord context.");
@@ -906,6 +1063,11 @@ test("MCP control server can inspect and submit chat relay items", async () => {
     enabled: true,
     size: 1,
     pending: () => [{ id: "relay-1", triggerText: "hello" }],
+    peek: () => ({ id: "relay-1", kind: "direct", scope: "guild" }),
+    claimById: async (args) => {
+      calls.push(["claimById", args.id, args.workerId]);
+      return { ok: true, status: "claimed", id: args.id, item: { id: args.id, leaseToken: "lease-1" } };
+    },
     claim: async (args) => {
       calls.push(["claim", args.workerId, args.limit]);
       return [{ id: "relay-1", leaseToken: "lease-1" }];
@@ -923,6 +1085,10 @@ test("MCP control server can inspect and submit chat relay items", async () => {
       calls.push(["dismiss", id, reason, leaseToken]);
       return { ok: true, id };
     },
+    flushQueue: async ({ reason, includeLeased }) => {
+      calls.push(["flush", reason, includeLeased]);
+      return { ok: true, removed: 2, includeLeased };
+    },
   };
   const server = createTestServer({ chatRelay });
   try {
@@ -932,7 +1098,26 @@ test("MCP control server can inspect and submit chat relay items", async () => {
       (await callTool(port, "get_pending_chat_relay")).result.content[0].text,
     );
     assert.equal(pending[0].id, "relay-1");
-    await callTool(port, "claim_chat_relay_items", { workerId: "test-worker", limit: 1 });
+    const peek = JSON.parse(
+      (await callTool(port, "peek_chat_relay_item")).result.content[0].text,
+    );
+    assert.deepEqual(peek, {
+      ok: true,
+      status: "pending",
+      item: { id: "relay-1", kind: "direct", scope: "guild" },
+    });
+    const exactClaim = JSON.parse(
+      (await callTool(port, "claim_chat_relay_item", { id: "relay-1", workerId: "exact-worker" })).result.content[0].text,
+    );
+    assert.equal(exactClaim.status, "claimed");
+    assert.equal(exactClaim.item.leaseToken, "lease-1");
+    const claim = JSON.parse(
+      (await callTool(port, "claim_chat_relay_items", { workerId: "test-worker", limit: 1 })).result.content[0].text,
+    );
+    assert.equal(claim.ok, true);
+    assert.equal(claim.status, "claimed");
+    assert.equal(claim.claimedCount, 1);
+    assert.equal(claim.items[0].id, "relay-1");
     const item = JSON.parse(
       (await callTool(port, "get_chat_relay_item", { id: "relay-1" })).result.content[0].text,
     );
@@ -940,12 +1125,117 @@ test("MCP control server can inspect and submit chat relay items", async () => {
     await callTool(port, "submit_chat_relay_reply", { id: "relay-1", reply: "hi", leaseToken: "lease-1" });
     await callTool(port, "renew_chat_relay_lease", { id: "relay-1", leaseToken: "lease-1" });
     await callTool(port, "dismiss_chat_relay_item", { id: "relay-1", reason: "skip", leaseToken: "lease-1" });
+    await callTool(port, "complete_chat_relay_without_reply", { id: "relay-1", reason: "skip safely", leaseToken: "lease-1" });
+    const flushed = JSON.parse(
+      (await callTool(port, "flush_chat_relay_queue", { reason: "clear jam", includeLeased: true })).result.content[0].text,
+    );
+    assert.equal(flushed.removed, 2);
     assert.deepEqual(calls, [
+      ["claimById", "relay-1", "exact-worker"],
       ["claim", "test-worker", 1],
       ["submit", "relay-1", "hi", "lease-1"],
       ["renew", "relay-1", "lease-1"],
       ["dismiss", "relay-1", "skip", "lease-1"],
+      ["dismiss", "relay-1", "skip safely", "lease-1"],
+      ["flush", "clear jam", true],
     ]);
+  } finally {
+    await server.close();
+  }
+});
+
+test("MCP control server introspects only owner relay leases with a separate service token", async () => {
+  const calls = [];
+  const server = createTestServer({
+    config: {
+      capabilityIntrospectionToken: "capability-service-token",
+      ownerUserIds: new Set(["owner-user"]),
+    },
+    chatRelay: {
+      authorizeOwnerLease: (id, leaseToken, ownerIds) => {
+        calls.push({ id, leaseToken, ownerIds: [...ownerIds] });
+        return id === "relay-owner" && leaseToken === "lease-owner"
+          ? { ok: true, authorized: true, principalId: "discord:owner-user", relayItemId: id }
+          : { ok: false, authorized: false };
+      },
+    },
+  });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const { port } = server.address();
+    const url = `http://127.0.0.1:${port}/api/capabilities/introspect`;
+    const body = {
+      capability: "filesystem",
+      relayItemId: "relay-owner",
+      leaseToken: "lease-owner",
+      tool: "read_file",
+      scope: "gremy-corner",
+    };
+
+    const wrongCredential = await fetch(url, {
+      method: "POST",
+      headers: { authorization: "Bearer secret-token", "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    assert.equal(wrongCredential.status, 401);
+
+    const accepted = await fetch(url, {
+      method: "POST",
+      headers: { authorization: "Bearer capability-service-token", "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    assert.equal(accepted.status, 200);
+    assert.equal((await accepted.json()).authorized, true);
+    assert.deepEqual(calls, [{ id: "relay-owner", leaseToken: "lease-owner", ownerIds: ["owner-user"] }]);
+  } finally {
+    await server.close();
+  }
+});
+
+test("MCP control server reports an empty relay claim without implying an error", async () => {
+  const server = createTestServer({
+    chatRelay: {
+      claim: async () => [],
+    },
+  });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const { port } = server.address();
+    const claim = JSON.parse(
+      (await callTool(port, "claim_chat_relay_items", { workerId: "test-worker" })).result.content[0].text,
+    );
+    assert.deepEqual(claim, {
+      ok: true,
+      status: "empty",
+      claimedCount: 0,
+      items: [],
+    });
+  } finally {
+    await server.close();
+  }
+});
+
+test("MCP advertises relay claims as internal non-destructive mutations", async () => {
+  const server = createTestServer({
+    chatRelay: {
+      claim: async () => [],
+    },
+  });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const { port } = server.address();
+    const tools = await listTools(port);
+    const claim = tools.find((tool) => tool.name === "claim_chat_relay_items");
+    assert.ok(claim);
+    assert.deepEqual(claim.annotations, {
+      title: "Claim pending chat relay work",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    });
+    assert.match(claim.description, /temporary internal leases/);
+    assert.match(claim.description, /does not send messages, delete content/);
   } finally {
     await server.close();
   }
@@ -990,6 +1280,117 @@ test("MCP control server returns relay attachments as image content", async () =
   }
 });
 
+test("MCP control server returns relay text attachments as text content", async () => {
+  const chatRelay = {
+    getTextAttachment: (id, index) => id === "relay-1" && index === 0
+      ? {
+          source: "attachment",
+          filename: "recipe_for_a_pattern.md",
+          contentType: "text/markdown",
+          size: 12,
+          url: "https://cdn.discordapp.com/attachments/channel/message/recipe_for_a_pattern.md",
+        }
+      : null,
+  };
+  const server = createTestServer({
+    chatRelay,
+    config: { chatRelay: { maxAttachmentBytes: 1024 } },
+    fetchImplementation: async () => new Response(Buffer.from("# Soul Core\n"), {
+      headers: { "content-type": "text/markdown", "content-length": "12" },
+    }),
+  });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const { port } = server.address();
+    const result = (await callTool(port, "get_chat_relay_text_attachment", { id: "relay-1", index: 0 })).result;
+    assert.deepEqual(result.content[0], {
+      type: "text",
+      text: "# Soul Core\n",
+    });
+    const metadata = JSON.parse(result.content[1].text);
+    assert.equal(metadata.filename, "recipe_for_a_pattern.md");
+    assert.equal(metadata.size, 12);
+
+    const missing = (await callTool(port, "get_chat_relay_text_attachment", { id: "relay-1", index: 1 })).result;
+    assert.equal(missing.isError, true);
+  } finally {
+    await server.close();
+  }
+});
+
+test("MCP control server returns relay audio attachments as audio content", async () => {
+  const bytes = tinyWav();
+  const chatRelay = {
+    getAudioAttachment: (id, index) => id === "relay-1" && index === 0
+      ? {
+          source: "attachment",
+          filename: "sound.wav",
+          contentType: "audio/wav",
+          size: bytes.length,
+          url: "https://cdn.discordapp.com/attachments/channel/message/sound.wav",
+        }
+      : null,
+  };
+  const server = createTestServer({
+    chatRelay,
+    config: { chatRelay: { maxAttachmentBytes: 1024 } },
+    fetchImplementation: async () => new Response(bytes, {
+      headers: { "content-type": "audio/wav", "content-length": String(bytes.length) },
+    }),
+  });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const { port } = server.address();
+    const result = (await callTool(port, "get_chat_relay_audio_attachment", { id: "relay-1", index: 0 })).result;
+    assert.deepEqual(result.content[0], {
+      type: "audio",
+      data: bytes.toString("base64"),
+      mimeType: "audio/wav",
+    });
+    const metadata = JSON.parse(result.content[1].text);
+    assert.equal(metadata.filename, "sound.wav");
+    assert.equal(metadata.size, bytes.length);
+    assert.equal(metadata.durationSeconds, 0);
+    assert.equal(metadata.sha256.length, 64);
+
+    const missing = (await callTool(port, "get_chat_relay_audio_attachment", { id: "relay-1", index: 1 })).result;
+    assert.equal(missing.isError, true);
+  } finally {
+    await server.close();
+  }
+});
+
+test("MCP audio attachment fetch uses the audio-specific byte limit", async () => {
+  const bytes = Buffer.concat([tinyWav(), Buffer.alloc(1_456, 0)]);
+  const chatRelay = {
+    getAudioAttachment: (id, index) => id === "relay-1" && index === 0
+      ? {
+          source: "attachment",
+          filename: "sound.wav",
+          contentType: "audio/wav",
+          size: bytes.length,
+          url: "https://cdn.discordapp.com/attachments/channel/message/sound.wav",
+        }
+      : null,
+  };
+  const server = createTestServer({
+    chatRelay,
+    config: { chatRelay: { maxAttachmentBytes: 1_024, maxAudioAttachmentBytes: 2_000 } },
+    fetchImplementation: async () => new Response(bytes, {
+      headers: { "content-type": "audio/wav", "content-length": String(bytes.length) },
+    }),
+  });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const { port } = server.address();
+    const result = (await callTool(port, "get_chat_relay_audio_attachment", { id: "relay-1", index: 0 })).result;
+    assert.equal(result.isError, undefined);
+    assert.equal(JSON.parse(result.content[1].text).size, bytes.length);
+  } finally {
+    await server.close();
+  }
+});
+
 test("MCP relay attachment fetch honors the queue byte limit", async () => {
   const bytes = Buffer.alloc(1_500, 1);
   const chatRelay = {
@@ -1019,7 +1420,6 @@ test("MCP relay attachment fetch honors the queue byte limit", async () => {
     await server.close();
   }
 });
-
 test("MCP control server refuses to start without a token", () => {
   assert.throws(
     () =>

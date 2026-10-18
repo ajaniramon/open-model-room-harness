@@ -22,10 +22,9 @@ function providerLabel(provider) {
   }[provider] || provider;
 }
 
-// Echo a tool-call turn's reasoning back under the same field names the provider
-// used (NanoGPT: `reasoning`; Xiaomi/DeepSeek native: `reasoning_content`;
-// OpenRouter-style: `reasoning_details`). Absent fields are left out, so models
-// that do not reason see an unchanged request shape.
+// Thinking models can attach private reasoning metadata to a tool-call turn and
+// expect that same metadata back with the assistant message on the next request.
+// Preserve only the provider-defined fields; visible responses still return text only.
 export function toolTurnReasoning(message) {
   const echoed = {};
   for (const field of ["reasoning", "reasoning_content"]) {
@@ -535,9 +534,8 @@ export class ModelClient {
     if (activeToolRuntime?.tools?.length) {
       body.tools = activeToolRuntime.tools;
       body.tool_choice = "auto";
-      // Thinking models (MiMo, DeepSeek) expect the reasoning behind a tool call to be
-      // passed back on the next request; without it they lose the thread between
-      // tool iterations. Only content is ever returned to Discord.
+      // Tool-capable thinking models need their reasoning metadata returned on the
+      // following iteration, so do not ask NanoGPT to strip it from this response.
     } else if (route.provider === "nanogpt") {
       body.reasoning = { exclude: true };
     }

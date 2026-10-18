@@ -80,7 +80,7 @@ if (invokedDirectly) {
   const port = Number.parseInt(process.env.JJ_MEMORY_PANEL_PORT || "4380", 10);
   // Bound to loopback on purpose: the panel shows private Discord memory.
   createPanelServer().listen(port, "127.0.0.1", () => {
-    console.log(`JJ memory panel: http://127.0.0.1:${port}`);
+    console.log(`Assistant memory panel: http://127.0.0.1:${port}`);
     console.log(`Reading ${config.memoryStorePath}`);
   });
 }

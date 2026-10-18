@@ -46,7 +46,7 @@ function baseConfig() {
   };
 }
 
-function createHarness({ maintenanceEnabled = false, complete } = {}) {
+function createHarness({ maintenanceEnabled = false, complete, requestRuntimeShutdown } = {}) {
   const sent = [];
   const state = { inferences: 0 };
   const runtimeControl = {
@@ -55,7 +55,7 @@ function createHarness({ maintenanceEnabled = false, complete } = {}) {
     execute: async (command) => {
       if (command.action === "maintenance_on") runtimeControl.maintenanceEnabled = true;
       if (command.action === "maintenance_off") runtimeControl.maintenanceEnabled = false;
-      return { response: `[${command.action}]` };
+      return { response: `[${command.action}]`, shutdown: command.action === "shutdown" };
     },
   };
   const nanoGpt = {
@@ -68,6 +68,7 @@ function createHarness({ maintenanceEnabled = false, complete } = {}) {
     config: baseConfig(),
     nanoGpt,
     runtimeControl,
+    requestRuntimeShutdown,
     systemPrompt: "system",
     logger: { info: () => undefined, error: () => undefined },
   });
@@ -111,6 +112,35 @@ function createHarness({ maintenanceEnabled = false, complete } = {}) {
   };
   return { client, runtimeControl, sent, state, emit, settle };
 }
+
+test("exact owner shutdown command invokes the clean shutdown callback", async () => {
+  let shutdownRequests = 0;
+  const harness = createHarness({
+    requestRuntimeShutdown: () => {
+      shutdownRequests += 1;
+    },
+  });
+  harness.emit(OWNER, "channel-b", "@JJ kill discord");
+  await harness.settle();
+  assert.equal(shutdownRequests, 1);
+  assert.deepEqual(harness.sent, [{ channelId: "channel-b", text: "[shutdown]" }]);
+  assert.equal(harness.state.inferences, 0);
+});
+
+test("shutdown command from a username-only fallback is denied", async () => {
+  const fallbackOwner = { id: "333333333333333333", username: OWNER.username, bot: false };
+  let shutdownRequests = 0;
+  const harness = createHarness({
+    requestRuntimeShutdown: () => {
+      shutdownRequests += 1;
+    },
+  });
+  harness.emit(fallbackOwner, "channel-b", "@JJ kill discord");
+  await harness.settle();
+  assert.equal(shutdownRequests, 0);
+  assert.match(harness.sent[0].text, /numeric owner ID/);
+  assert.equal(harness.state.inferences, 0);
+});
 
 test("maintenance discards a stranger's mention before inference", async () => {
   const harness = createHarness({ maintenanceEnabled: true });

@@ -136,7 +136,7 @@ export function validateSetup(input) {
     voiceId: clean(input.voiceId, 200) || "21m00Tcm4TlvDq8ikWAM",
     ownerId: clean(input.ownerId, 100),
     ownerUsername: clean(input.ownerUsername, 100),
-    botName: clean(input.botName, 80) || "JJ",
+    botName: clean(input.botName, 80) || "Assistant",
     timeZone: resolveTimeZone(clean(input.timeZone, 100)),
     enableMemory: input.enableMemory === true,
     enableMemoryCapture: input.enableMemory === true && input.enableMemoryCapture === true,

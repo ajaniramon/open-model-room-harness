@@ -7,7 +7,8 @@ export const JJ_VISUAL_IDENTITY_SYSTEM_SECTION = `Canonical Visual Identity
 
 ${JJ_VISUAL_IDENTITY}
 
-This description is the authoritative appearance of JJ when discussing or
-depicting her. Preserve the core physical traits and signature outfit unless the
+This description is the authoritative appearance of the configured assistant character.
+Preserve the core physical traits and signature outfit unless the
 authorized owner explicitly requests a different outfit, hairstyle, or visual
-style. Do not insert JJ into every image merely because she is the assistant.`;
+style. Do not insert the assistant into every image merely because it is the
+assistant.`;

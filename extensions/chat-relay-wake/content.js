@@ -13,10 +13,38 @@ const SEND_BUTTON_SELECTORS = [
 
 const STOP_BUTTON_SELECTORS = [
   "button[data-testid='stop-button']",
+  "button[data-testid='stop-response-button']",
   "button[aria-label*='Stop']",
+  "button[aria-label*='stop']",
+  "[data-is-streaming='true']",
+  ".result-streaming",
 ];
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
+const OWNER_EVENT_MARKER = "Trusted owner capability event reference";
+let ownerLaneSettings = { directOwnerEnabled: false, ownerTargetUrl: "" };
+let ownerAttestationInFlight = false;
+
+function normalizedTaskUrl(value) {
+  try {
+    const url = new URL(value);
+    url.hash = "";
+    url.search = "";
+    url.pathname = url.pathname.replace(/\/$/, "");
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return "";
+  }
+}
+
+async function refreshOwnerLaneSettings() {
+  ownerLaneSettings = await chrome.storage.local.get({ directOwnerEnabled: false, ownerTargetUrl: "" });
+}
+
+function isOwnerLane() {
+  return ownerLaneSettings.directOwnerEnabled === true &&
+    normalizedTaskUrl(location.href) === normalizedTaskUrl(ownerLaneSettings.ownerTargetUrl);
+}
 
 function sendHeartbeat() {
   chrome.runtime.sendMessage({ type: "chat-relay:heartbeat" }).catch(() => {});
@@ -24,6 +52,12 @@ function sendHeartbeat() {
 
 sendHeartbeat();
 setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
+refreshOwnerLaneSettings().catch(() => {});
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === "local" && (changes.directOwnerEnabled || changes.ownerTargetUrl)) {
+    refreshOwnerLaneSettings().catch(() => {});
+  }
+});
 
 function firstMatch(selectors) {
   for (const selector of selectors) {
@@ -133,6 +167,50 @@ async function handleWake({ prompt, autoSubmit }) {
   }
   return { status: "submitted" };
 }
+
+async function attestAndSubmitOwnerMessage(event) {
+  if (!event.isTrusted || !isOwnerLane() || ownerAttestationInFlight || isBusy()) return;
+  const composer = firstMatch(COMPOSER_SELECTORS);
+  if (!(composer instanceof HTMLElement)) return;
+  const messageText = composerText(composer);
+  if (!messageText || messageText.includes(OWNER_EVENT_MARKER)) return;
+
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  ownerAttestationInFlight = true;
+  try {
+    const attestation = await chrome.runtime.sendMessage({
+      type: "chat-relay:attest-owner-message",
+      messageText,
+    });
+    if (attestation?.status !== "attested" || !attestation.eventRef) {
+      throw new Error(attestation?.reason || "Owner attestation was not issued");
+    }
+
+    const taggedMessage = `${messageText}\n\n[${OWNER_EVENT_MARKER}: ${attestation.eventRef}. Use this as capabilityEventRef for privileged tools in this turn.]`;
+    if (!insertPrompt(composer, taggedMessage)) {
+      throw new Error("Owner event reference could not be attached to the message");
+    }
+    const sendButton = await waitForEnabledSendButton();
+    if (!sendButton) throw new Error("ChatGPT send button did not become available");
+    sendButton.click();
+  } catch (error) {
+    window.alert(`Owner attestation failed; the message was not sent.\n\n${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    ownerAttestationInFlight = false;
+  }
+}
+
+document.addEventListener("click", (event) => {
+  if (!(event.target instanceof Element)) return;
+  if (event.target.closest(SEND_BUTTON_SELECTORS.join(","))) attestAndSubmitOwnerMessage(event);
+}, true);
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey || event.isComposing) return;
+  if (!(event.target instanceof Element) || !event.target.closest(COMPOSER_SELECTORS.join(","))) return;
+  attestAndSubmitOwnerMessage(event);
+}, true);
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== "chat-relay:wake") return false;

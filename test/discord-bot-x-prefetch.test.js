@@ -197,11 +197,13 @@ test("a disabled prefetch gate downloads nothing", async () => {
 test("provider-free relay mode preserves images without running local vision", async () => {
   let visionCalls = 0;
   let queuedMessage = null;
+  let queuedEmojiPalette = null;
   const chatRelay = {
     enabled: true,
     setDeliveryHandlers: () => undefined,
-    enqueue({ message }) {
+    enqueue({ message, emojiPalette }) {
       queuedMessage = message;
+      queuedEmojiPalette = emojiPalette;
       return "relay-image";
     },
   };
@@ -213,7 +215,14 @@ test("provider-free relay mode preserves images without running local vision", a
     }],
   ]);
   const harness = createHarness({
-    config: baseConfig({ chatProvider: "none", chatModel: "none" }),
+    config: baseConfig({
+      chatProvider: "none",
+      chatModel: "none",
+      discordEmojiPalette: [
+        "<:gremy:1506032464857010427>",
+        "<a:gremy_move:1536197304376229928>",
+      ],
+    }),
     chatRelay,
     visionAnalyzer: {
       async analyze() {
@@ -228,4 +237,36 @@ test("provider-free relay mode preserves images without running local vision", a
 
   assert.equal(visionCalls, 0);
   assert.equal(queuedMessage?.attachments, attachments);
+  assert.deepEqual(queuedEmojiPalette, [
+    "<:gremy:1506032464857010427>",
+    "<a:gremy_move:1536197304376229928>",
+  ]);
+});
+
+test("an unauthorized bot image request remains normal relay conversation", async () => {
+  const bot = { id: "333333333333333333", username: "navi", bot: true };
+  let queued = null;
+  const chatRelay = {
+    enabled: true,
+    setDeliveryHandlers: () => undefined,
+    enqueue(item) {
+      queued = item;
+      return "relay-image-request";
+    },
+  };
+  const harness = createHarness({
+    config: baseConfig({
+      chatProvider: "none",
+      chatModel: "none",
+      botFilterMode: "allowlist",
+      botUserIds: new Set([bot.id]),
+    }),
+    chatRelay,
+  });
+
+  harness.emit(bot, "@bot draw a picture of an impossible view");
+  await harness.settle();
+
+  assert.equal(queued?.message.author.id, bot.id);
+  assert.equal(queued?.message.content, "@bot draw a picture of an impossible view");
 });

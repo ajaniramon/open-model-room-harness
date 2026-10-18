@@ -6,7 +6,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
-import { fetchRelayImageAttachment } from "./chat-relay-attachments.js";
+import { fetchRelayImageAttachment, fetchRelayAudioAttachment, fetchRelayTextAttachment } from "./chat-relay-attachments.js";
 import {
   clearDiscordScope,
   listDiscordScopes,
@@ -431,10 +431,29 @@ const TOOL_CATALOG = Object.freeze([
     },
   },
   {
+    name: "peek_chat_relay_item",
+    category: "chat-relay",
+    safety: "read-only",
+    description: "Peek at metadata for the oldest pending Discord relay item without acquiring or returning its conversation payload.",
+    arguments: {},
+  },
+  {
+    name: "claim_chat_relay_item",
+    category: "chat-relay",
+    safety: "runtime-write",
+    description: "Atomically claim one exact pending Discord relay item by ID. Returns claimed, already_claimed, or not_pending.",
+    arguments: {
+      id: "Relay item ID returned by peek_chat_relay_item.",
+      workerId: "Stable worker identity.",
+      leaseSeconds: "How long the claim remains owned.",
+      includeContext: "When true, include compacted Discord context.",
+    },
+  },
+  {
     name: "claim_chat_relay_items",
     category: "chat-relay",
     safety: "runtime-write",
-    description: "Atomically claim pending Discord turns for one external chat worker. Each claimed item is authoritative; ignore unrelated chat-session history.",
+    description: "Atomically claim pending Discord turns for one external chat worker. Returns an explicit claimed or empty status; a normal empty result is not a platform or safety error. Each claimed item is authoritative; ignore unrelated chat-session history.",
     arguments: {
       workerId: "Stable worker identity.",
       limit: "Maximum number of items to claim.",
@@ -446,7 +465,7 @@ const TOOL_CATALOG = Object.freeze([
     name: "get_chat_relay_item",
     category: "chat-relay",
     safety: "read-only",
-    description: "Get one pending Discord relay item including its trigger, Discord reply reference, images, and context.",
+    description: "Get one pending Discord relay item including its trigger, Discord reply reference, attachments, and context.",
     arguments: {
       id: "Relay item ID.",
     },
@@ -459,6 +478,39 @@ const TOOL_CATALOG = Object.freeze([
     arguments: {
       id: "Relay item ID.",
       index: "Zero-based image attachment index from the relay item.",
+    },
+  },
+  {
+    name: "send_scoped_discord_attachment",
+    category: "discord",
+    safety: "runtime-write",
+    description: "Send one attachment only through a configured Discord scope.",
+    arguments: {
+      scope: "Configured scope name.",
+      filename: "Plain filename presented to Discord.",
+      dataBase64: "Base64-encoded file content.",
+      message: "Optional message text to accompany the attachment.",
+      channelId: "Optional channel ID inside the scope; defaultChannelId is used otherwise.",
+    },
+  },
+  {
+    name: "get_chat_relay_text_attachment",
+    category: "chat-relay",
+    safety: "read-only",
+    description: "Fetch one safe UTF-8 text file attached to a pending or leased Discord relay item.",
+    arguments: {
+      id: "Relay item ID.",
+      index: "Zero-based text attachment index from the relay item.",
+    },
+  },
+  {
+    name: "get_chat_relay_audio_attachment",
+    category: "chat-relay",
+    safety: "read-only",
+    description: "Fetch one safe audio file attached to a pending or leased Discord relay item.",
+    arguments: {
+      id: "Relay item ID.",
+      index: "Zero-based audio attachment index from the relay item.",
     },
   },
   {
@@ -495,6 +547,17 @@ const TOOL_CATALOG = Object.freeze([
     },
   },
   {
+    name: "complete_chat_relay_without_reply",
+    category: "chat-relay",
+    safety: "runtime-write",
+    description: "Complete one claimed internal relay item without sending or deleting any Discord message.",
+    arguments: {
+      id: "Relay item ID.",
+      reason: "Short reason why no reply is needed.",
+      leaseToken: "Lease token returned by a relay claim.",
+    },
+  },
+  {
     name: "dismiss_chat_relay_item",
     category: "chat-relay",
     safety: "runtime-write",
@@ -503,6 +566,16 @@ const TOOL_CATALOG = Object.freeze([
       id: "Relay item ID.",
       reason: "Optional dismissal reason.",
       leaseToken: "Lease token returned by claim_chat_relay_items.",
+    },
+  },
+  {
+    name: "flush_chat_relay_queue",
+    category: "chat-relay",
+    safety: "runtime-write",
+    description: "Operator cleanup for relay backlog. Removes pending relay items and, when requested, leased items too. Does not send, edit, or delete Discord messages.",
+    arguments: {
+      reason: "Optional audit/dismissal reason.",
+      includeLeased: "When true, also remove currently leased/in-progress relay items.",
     },
   },
 ]);
@@ -662,6 +735,8 @@ function createMcpServer({
             "claim_chat_relay_items",
             "get_chat_relay_item",
             "get_chat_relay_attachment",
+            "get_chat_relay_text_attachment",
+            "get_chat_relay_audio_attachment",
             "complete_chat_relay_item",
           ],
         },
@@ -1037,6 +1112,59 @@ function createMcpServer({
     }
   });
 
+  // Scoped attachment tools.
+  server.tool("send_scoped_discord_attachment", "Send one attachment only through a configured Discord scope.", {
+    scope: z.string().min(1).max(40),
+    filename: z.string().min(1).max(255),
+    dataBase64: z.string().min(1).max(12_000_000),
+    message: z.string().max(2_000).optional(),
+    channelId: z.string().optional(),
+  }, async ({ scope, filename, dataBase64, message = "", channelId = "" }) => {
+    const audit = async (status, details = {}) => auditLogger?.log?.({
+      type: "mcp_scoped_discord_attachment_send", tool: "send_scoped_discord_attachment", status, scope,
+      channelId: details.channelId || channelId || null, filename, fileBytes: details.fileBytes ?? null,
+      messageLength: String(message || "").length, error: details.error || null,
+    });
+    if (!/^[^\\/]+$/.test(filename)) return textResult({ ok: false, error: "filename must be a plain filename without path separators." });
+    const encoded = String(dataBase64 || "");
+    if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
+      return textResult({ ok: false, error: "dataBase64 must be canonical base64." });
+    }
+    const fileData = Buffer.from(encoded, "base64");
+    if (fileData.length < 1 || fileData.length > 8 * 1024 * 1024) {
+      return textResult({ ok: false, error: "Attachment must be between 1 byte and 8 MiB." });
+    }
+    const client = resolveDiscordClient(discordClient);
+    if (!discordReady(client)) return textResult({ ok: false, error: "Discord client is not ready." });
+    const configuredScope = resolveDiscordScope(getDiscordScopes(), scope);
+    if (!configuredScope) return textResult({ ok: false, error: "Scope not found." });
+    if (configuredScope.allowSend !== true) return textResult({ ok: false, error: "Scope does not allow sending." });
+    const targetChannelId = String(channelId || configuredScope.defaultChannelId || "").trim();
+    if (!targetChannelId) return textResult({ ok: false, error: "channelId is required because the scope has no defaultChannelId." });
+    const channel = client.channels.cache.get(targetChannelId) || await client.channels.fetch(targetChannelId).catch(() => null);
+    if (!channel) return textResult({ ok: false, error: "Channel was not found or is not visible to the bot." });
+    if (!scopeAllowsChannel(configuredScope, { guildId: channel.guildId || null, channelId: channel.id, parentId: channel.parentId || null })) {
+      return textResult({ ok: false, error: "Channel or guild is not in scope." });
+    }
+    if (!DISCORD_TEXT_CHANNEL_TYPES.has(channel.type) || typeof channel.send !== "function") {
+      return textResult({ ok: false, error: "Scope send supports text-like Discord channels only." });
+    }
+    if (canSendInChannel(channel, client) !== true) return textResult({ ok: false, error: "Bot lacks View Channel or Send Messages permission there." });
+    try {
+      const sent = await channel.send({
+        content: String(message || ""),
+        files: [{ attachment: fileData, name: filename }],
+        allowedMentions: { parse: [], repliedUser: false },
+      });
+      await audit("sent", { channelId: targetChannelId, fileBytes: fileData.length });
+      return textResult({ ok: true, scope: configuredScope.name, guildId: channel.guildId || null, channelId: targetChannelId, messageId: sent?.id || null, filename, fileBytes: fileData.length });
+    } catch (error) {
+      logger.error("MCP scoped Discord attachment send failed", error);
+      await audit("failed", { channelId: targetChannelId, fileBytes: fileData.length, error: error?.name || "send_failed" });
+      return textResult({ ok: false, error: "Scoped Discord attachment send failed; the error has been logged." });
+    }
+  });
+
   server.tool("get_behavior_mode", "Get the resolved behavior mode for a scope.", {
     guildId: z.string().optional(),
     channelId: z.string().optional(),
@@ -1071,15 +1199,26 @@ function createMcpServer({
   server.tool("get_runtime_status", "Get generic runtime control and behavior mode status.", {
     guildId: z.string().optional(),
     channelId: z.string().optional(),
-  }, async ({ guildId, channelId }) => textResult({
-    behaviorMode: behaviorModeController.resolve({ guildId, channelId }),
-    maintenanceEnabled: runtimeControl?.maintenanceEnabled === true,
-    observationEnabled: runtimeControl?.observationEnabled === true,
-    audioModeEnabled: audioModeState?.enabled ?? null,
-    audioConfigured: Boolean(audioConfigured),
-    model: config.chatModel,
-    provider: config.chatProvider,
-  }));
+  }, async ({ guildId, channelId }) => {
+    const heartbeat = resolveDiscordClient(discordClient)?.ownerHeartbeat;
+    return textResult({
+      behaviorMode: behaviorModeController.resolve({ guildId, channelId }),
+      maintenanceEnabled: runtimeControl?.maintenanceEnabled === true,
+      observationEnabled: runtimeControl?.observationEnabled === true,
+      audioModeEnabled: audioModeState?.enabled ?? null,
+      audioConfigured: Boolean(audioConfigured),
+      ownerHeartbeat: heartbeat?.status?.() || {
+        enabled: config.ownerHeartbeat?.enabled === true,
+        running: false,
+        ownerConfigured: Boolean(config.ownerHeartbeat?.ownerUserId),
+        lastOwnerInteractionAt: null,
+        lastOpportunityAt: null,
+        nextOpportunityAt: null,
+      },
+      model: config.chatModel,
+      provider: config.chatProvider,
+    });
+  });
 
   server.tool("get_capability_status", "Get a safe read-only summary of configured runtime capabilities.", {}, async () =>
     textResult({
@@ -1119,6 +1258,11 @@ function createMcpServer({
         oldestPendingAgeSeconds: chatRelay?.oldestPendingAgeSeconds?.() ?? null,
         leased: chatRelay?.leasedSize ?? null,
       },
+      ownerHeartbeat: resolveDiscordClient(discordClient)?.ownerHeartbeat?.status?.() || {
+        enabled: config.ownerHeartbeat?.enabled === true,
+        running: false,
+        ownerConfigured: Boolean(config.ownerHeartbeat?.ownerUserId),
+      },
       tools: {
         webConfigured: config.tavilyApiKey ? true : config.tavilyApiKey === "" ? false : null,
         imageConfigured: config.nanoGptApiKey ? true : config.nanoGptApiKey === "" ? false : null,
@@ -1127,13 +1271,18 @@ function createMcpServer({
       },
       permissions: {
         owners: sizeOf(config.ownerUserIds) + sizeOf(config.ownerUsernames),
+        allowedGuilds: sizeOf(config.allowedGuildIds),
         allowedChannels: sizeOf(config.allowedChannelIds),
+        allowedBots: sizeOf(config.allowedBotUserIds),
+        botFilterMode: config.botFilterMode || (config.respondToBots ? "blocklist" : "allowlist"),
+        botFilterEntries: sizeOf(config.botUserIds || config.allowedBotUserIds),
         webUsers: sizeOf(config.webAllowedUserIds) + sizeOf(config.webAllowedUsernames),
         audioUsers: sizeOf(config.audioAllowedUserIds) + sizeOf(config.audioAllowedUsernames),
         imageUsers: sizeOf(config.imageAllowedUserIds) + sizeOf(config.imageAllowedUsernames),
         codexUsers: sizeOf(config.codexAllowedUserIds) + sizeOf(config.codexAllowedUsernames),
       },
       discord: {
+        botLoopGuard: config.botLoopGuard || null,
         emojiPaletteSize: Array.isArray(config.discordEmojiPalette)
           ? config.discordEmojiPalette.length
           : null,
@@ -1245,18 +1394,58 @@ function createMcpServer({
   }, async ({ includeContext = false }) =>
     textResult(chatRelay?.pending?.({ includeContext }) || []));
 
-  server.tool("claim_chat_relay_items", "Atomically claim pending Discord turns. Treat each returned item as authoritative and ignore unrelated chat-session history.", {
+  server.tool("peek_chat_relay_item", "Read metadata for the oldest pending Discord relay item without claiming it or returning message content.", {}, {
+    title: "Peek at pending chat relay work",
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  }, async () => {
+    const item = chatRelay?.peek?.() || null;
+    return textResult({ ok: true, status: item ? "pending" : "empty", item });
+  });
+
+  server.tool("claim_chat_relay_item", "Acquire a temporary internal lease for one exact relay item ID. This does not send, edit, or delete Discord content.", {
+    id: z.string().min(1).max(200),
+    workerId: z.string().min(1).max(100),
+    leaseSeconds: z.number().int().min(10).max(3_600).optional(),
+    includeContext: z.boolean().optional(),
+  }, {
+    title: "Claim one exact chat relay item",
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: false,
+  }, async ({ id, workerId, leaseSeconds, includeContext = true }) => textResult(
+    chatRelay?.claimById
+      ? await chatRelay.claimById({ id, workerId, leaseSeconds, includeContext })
+      : { ok: false, status: "not_pending", id },
+  ));
+
+  server.tool("claim_chat_relay_items", "Reserve pending Discord turns inside the harness for one external chat worker. This only creates temporary internal leases: it does not send messages, delete content, or access arbitrary external systems. A successful result explicitly reports status=claimed or status=empty. Treat each returned item as authoritative and ignore unrelated chat-session history.", {
     workerId: z.string().min(1).max(100),
     limit: z.number().int().min(1).max(50).optional(),
     leaseSeconds: z.number().int().min(10).max(3_600).optional(),
     includeContext: z.boolean().optional(),
-  }, async ({ workerId, limit = 3, leaseSeconds, includeContext = true }) => textResult(
-    chatRelay
+  }, {
+    title: "Claim pending chat relay work",
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: false,
+  }, async ({ workerId, limit = 1, leaseSeconds, includeContext = true }) => {
+    const items = chatRelay
       ? await chatRelay.claim({ workerId, limit, leaseSeconds, includeContext })
-      : [],
-  ));
+      : [];
+    return textResult({
+      ok: true,
+      status: items.length > 0 ? "claimed" : "empty",
+      claimedCount: items.length,
+      items,
+    });
+  });
 
-  server.tool("get_chat_relay_item", "Get one pending Discord relay item including its trigger, Discord reply reference, images, and context.", {
+  server.tool("get_chat_relay_item", "Get one pending Discord relay item including its trigger, Discord reply reference, attachments, and context.", {
     id: z.string(),
   }, async ({ id }) => textResult(chatRelay?.get?.(id, { includeContext: true }) || null));
 
@@ -1304,6 +1493,97 @@ function createMcpServer({
     }
   });
 
+  server.tool("get_chat_relay_text_attachment", "Fetch one safe UTF-8 text file attached to a pending or leased Discord relay item.", {
+    id: z.string(),
+    index: z.number().int().min(0).max(9),
+  }, async ({ id, index }) => {
+    const reference = chatRelay?.getTextAttachment?.(id, index);
+    if (!reference) {
+      return {
+        content: [{ type: "text", text: "Relay text attachment was not found or is no longer active." }],
+        isError: true,
+      };
+    }
+    try {
+      const attachment = await fetchRelayTextAttachment(reference, {
+        fetchImplementation,
+        maxBytes: config.chatRelay?.maxAttachmentBytes,
+      });
+      return {
+        content: [
+          { type: "text", text: attachment.text },
+          {
+            type: "text",
+            text: JSON.stringify({
+              relayItemId: id,
+              index,
+              source: reference.source,
+              filename: reference.filename,
+              mimeType: attachment.mimeType,
+              size: attachment.size,
+            }),
+          },
+        ],
+      };
+    } catch (error) {
+      logger.error("MCP chat relay text attachment fetch failed", error);
+      return {
+        content: [{
+          type: "text",
+          text: error instanceof Error ? error.message : "Relay text attachment could not be fetched.",
+        }],
+        isError: true,
+      };
+    }
+  });
+
+  server.tool("get_chat_relay_audio_attachment", "Fetch one safe audio file attached to a pending or leased Discord relay item.", {
+    id: z.string(),
+    index: z.number().int().min(0).max(9),
+  }, async ({ id, index }) => {
+    const reference = chatRelay?.getAudioAttachment?.(id, index);
+    if (!reference) {
+      return {
+        content: [{ type: "text", text: "Relay audio attachment was not found or is no longer active." }],
+        isError: true,
+      };
+    }
+    try {
+      const attachment = await fetchRelayAudioAttachment(reference, {
+        fetchImplementation,
+        maxBytes: config.chatRelay?.maxAudioAttachmentBytes ?? chatRelay?.maxAttachmentBytes ?? config.chatRelay?.maxAttachmentBytes,
+        timeoutMs: config.chatRelay?.audioFetchTimeoutMs,
+      });
+      return {
+        content: [
+          { type: "audio", data: attachment.data, mimeType: attachment.mimeType },
+          {
+            type: "text",
+            text: JSON.stringify({
+              relayItemId: id,
+              index,
+              source: reference.source,
+              filename: reference.filename,
+              mimeType: attachment.mimeType,
+              size: attachment.size,
+              durationSeconds: attachment.durationSeconds,
+              sha256: attachment.sha256,
+            }),
+          },
+        ],
+      };
+    } catch (error) {
+      logger.error("MCP chat relay audio attachment fetch failed", error);
+      return {
+        content: [{
+          type: "text",
+          text: error instanceof Error ? error.message : "Relay audio attachment could not be fetched.",
+        }],
+        isError: true,
+      };
+    }
+  });
+
   server.tool("submit_chat_relay_reply", "Submit a reply for a pending Discord relay item.", {
     id: z.string(),
     reply: z.string().min(1).max(8_000),
@@ -1342,6 +1622,37 @@ function createMcpServer({
       ? await chatRelay.dismiss(id, reason, leaseToken)
       : { ok: false, error: "Chat relay is not configured." }));
 
+  server.tool("complete_chat_relay_without_reply", "Mark one claimed internal relay item complete without sending, editing, or deleting any Discord message.", {
+    id: z.string().min(1).max(200),
+    reason: z.string().max(500).optional(),
+    leaseToken: z.string().min(1),
+  }, {
+    title: "Complete relay work without a reply",
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: false,
+  }, async ({ id, reason = "", leaseToken }) => textResult(
+    chatRelay
+      ? await chatRelay.dismiss(id, reason, leaseToken)
+      : { ok: false, error: "Chat relay is not configured." },
+  ));
+
+  server.tool("flush_chat_relay_queue", "Operator cleanup for relay backlog. Removes pending relay items and, when requested, leased items too. Does not send, edit, or delete Discord messages.", {
+    reason: z.string().max(500).optional(),
+    includeLeased: z.boolean().optional(),
+  }, {
+    title: "Flush chat relay queue",
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: false,
+    openWorldHint: false,
+  }, async ({ reason = "manual_flush", includeLeased = false }) => textResult(
+    chatRelay
+      ? await chatRelay.flushQueue({ reason, includeLeased })
+      : { ok: false, error: "Chat relay is not configured." },
+  ));
+
   return server;
 }
 
@@ -1372,17 +1683,24 @@ export function startMcpControlServer({
   if (wakeToken && wakeToken === token) {
     throw new Error("MCP_CONTROL_WAKE_TOKEN must differ from MCP_CONTROL_BEARER_TOKEN.");
   }
+  const capabilityToken = String(config.capabilityIntrospectionToken || "").trim();
+  if (capabilityToken && [token, wakeToken].includes(capabilityToken)) {
+    throw new Error("MCP_CAPABILITY_INTROSPECTION_TOKEN must be a distinct service credential.");
+  }
 
   const transports = new Map();
   const authorizedSessions = new Set();
   let discordScopes = config.discordScopes || {};
   let scopePanelHtml = null;
+  let lastRelayWakeTraceKey = "";
   const httpServer = createServer(async (req, res) => {
     const url = new URL(req.url || "/", `http://${req.headers.host || "127.0.0.1"}`);
     const sessionId = url.searchParams.get("sessionId") || "";
     const path = normalizedMcpPath(url.pathname);
     const wakeStatusRequest = req.method === "GET" && path === "/api/chat-relay/wake-status";
-    if (wakeStatusRequest && !wakeToken) {
+    const relayFlushRequest = req.method === "POST" && path === "/api/chat-relay/flush";
+    const capabilityRequest = req.method === "POST" && path === "/api/capabilities/introspect";
+    if ((wakeStatusRequest || relayFlushRequest) && !wakeToken) {
       sendJson(res, 503, { error: "Wake status is not configured." });
       return;
     }
@@ -1392,27 +1710,105 @@ export function startMcpControlServer({
     const sessionAuthorized =
       path === "/messages" && sessionId !== "" && authorizedSessions.has(sessionId);
     const authorized =
+      (capabilityRequest && hasValidToken(req, url, capabilityToken)) ||
       (wakeStatusRequest && hasValidToken(req, url, wakeToken)) ||
-      (!wakeStatusRequest && (hasValidToken(req, url, token) || sessionAuthorized));
+      (relayFlushRequest && hasValidToken(req, url, wakeToken)) ||
+      (!wakeStatusRequest && !capabilityRequest &&
+        !relayFlushRequest &&
+        (hasValidToken(req, url, token) || sessionAuthorized));
     if (!authorized) {
       rejectUnauthorized(res);
       return;
     }
     try {
+      if (capabilityRequest) {
+        const body = await readJsonBody(req, 16 * 1024);
+        const capability = ["filesystem", "execution"].includes(body.capability)
+          ? body.capability
+          : "";
+        if (!capability) {
+          sendJson(res, 400, { ok: false, authorized: false, error: "Invalid capability." });
+          return;
+        }
+        const authorization = chatRelay?.authorizeOwnerLease?.(
+          body.relayItemId,
+          body.leaseToken,
+          config.ownerUserIds,
+        ) || { ok: false, authorized: false };
+        auditLogger?.log?.({
+          type: "capability_introspection",
+          capability,
+          tool: String(body.tool || "").slice(0, 100),
+          scope: String(body.scope || "").slice(0, 100),
+          status: authorization.authorized ? "authorized" : "denied",
+          relayItemId: String(body.relayItemId || "").slice(0, 200),
+        });
+        sendJson(res, authorization.authorized ? 200 : 403, authorization);
+        return;
+      }
+
       if (wakeStatusRequest) {
-        const status = chatRelay?.wakeStatus?.() || {
+        const ownerOnly = url.searchParams.get("ownerOnly") === "true";
+        const status = chatRelay?.wakeStatus?.({ ownerOnly }) || {
           pendingCount: 0,
+          directPendingCount: 0,
+          spontaneousPendingCount: 0,
+          autonomousPendingCount: 0,
+          fastLanePendingCount: 0,
+          fastLaneActiveCount: 0,
           leasedCount: 0,
           activeCount: 0,
           pendingKey: "",
           activeKey: "",
           oldestPendingId: null,
+          oldestPendingKind: null,
           oldestActiveId: null,
+          fastLanePendingKey: "",
+          fastLaneActiveKey: "",
+          oldestFastLanePendingId: null,
+          oldestFastLanePendingKind: null,
+          oldestFastLaneActiveId: null,
         };
+        const wakeTraceKey = [
+          ownerOnly,
+          status.pendingKey,
+          status.activeKey,
+          status.fastLanePendingKey,
+          status.fastLaneActiveKey,
+        ].join("|");
+        if (wakeTraceKey !== lastRelayWakeTraceKey) {
+          lastRelayWakeTraceKey = wakeTraceKey;
+          logger.info(
+            `[relay-trace] wake-status ownerOnly=${ownerOnly} pending=${status.pendingCount} ` +
+            `leased=${status.leasedCount} fastPending=${status.fastLanePendingCount} ` +
+            `fastActive=${status.fastLaneActiveCount}`,
+          );
+        }
         sendJson(res, 200, {
           enabled: chatRelay?.enabled === true,
           ...status,
         });
+        return;
+      }
+
+      if (relayFlushRequest) {
+        if (!chatRelay?.enabled) {
+          sendJson(res, 503, { ok: false, error: "Chat relay is not enabled." });
+          return;
+        }
+        const body = await readJsonBody(req, 4 * 1024).catch(() => ({}));
+        const result = await chatRelay.flushQueue({
+          reason: String(body?.reason || "operator_flush").slice(0, 500),
+          includeLeased: body?.includeLeased === true,
+        });
+        auditLogger?.log?.({
+          type: "http_chat_relay_flush",
+          tool: "chat_relay_wake_options",
+          status: "flushed",
+          removed: result.removed,
+          includeLeased: result.includeLeased,
+        });
+        sendJson(res, 200, result);
         return;
       }
 
@@ -1607,6 +2003,62 @@ export function startMcpControlServer({
           total: publicChannels.length,
           channels: publicChannels,
         });
+        return;
+      }
+
+      if (req.method === "POST" && path === "/api/autonomous/enqueue") {
+        if (!chatRelay?.enabled) {
+          sendJson(res, 503, { ok: false, error: "Chat relay is not enabled." });
+          return;
+        }
+        const body = await readJsonBody(req, 4 * 1024);
+        if (!body?.wakeId || !body?.eventRef) {
+          sendJson(res, 400, { ok: false, error: "wakeId and eventRef are required." });
+          return;
+        }
+        const relayId = chatRelay.enqueue({
+          message: {
+            id: `autonomous-${body.wakeId}`,
+            content: body.triggerText || "Autonomous wake. Review context and decide whether to act.",
+            createdTimestamp: Date.now(),
+            guildId: null,
+            guild: null,
+            channelId: "autonomous",
+            channel: { id: "autonomous", name: "autonomous" },
+            author: { id: "gremy-autonomous", username: "gremy-autonomous", globalName: "Gremy (Autonomous)" },
+            member: null,
+            attachments: new Map(),
+          },
+          context: body.context || [],
+          kind: "owner-heartbeat",
+          directResponse: false,
+          spontaneous: true,
+          audioEnabled: false,
+          emojiPalette: [],
+          deliveryIdentity: {
+            id: "gremy-autonomous",
+            username: "gremy-autonomous",
+            displayName: "Gremy (Autonomous)",
+            bot: true,
+          },
+        });
+        if (!relayId) {
+          sendJson(res, 503, { ok: false, error: "Could not enqueue relay item." });
+          return;
+        }
+        const item = chatRelay.get(relayId, { includeContext: false });
+        if (item) {
+          item.capabilityAuthority = {
+            status: "ready",
+            ingressClass: "autonomous",
+            sourceEventId: `autonomous:${body.wakeId}`,
+            eventId: body.eventRef,
+            runId: body.runId || null,
+            authority: "autonomous",
+            renewalCount: 0,
+          };
+        }
+        sendJson(res, 201, { ok: true, relayId });
         return;
       }
 

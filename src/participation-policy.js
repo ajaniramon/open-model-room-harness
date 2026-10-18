@@ -335,11 +335,11 @@ export class ParticipationController {
       return "Participation limits reset to their safe defaults.";
     }
     if (command.action === "unban") {
-      if (!command.userId) return "Usage: `@JJ limits unban @user`";
+      if (!command.userId) return "Usage: mention the bot, then use `limits unban @user`";
       const removed = await this.#unban(guildId, command.userId);
       return removed
-        ? `Temporary JJ block removed for <@${command.userId}>.`
-        : `No active JJ block exists for <@${command.userId}> in this server.`;
+        ? `Temporary assistant block removed for <@${command.userId}>.`
+        : `No active assistant block exists for <@${command.userId}> in this server.`;
     }
     throw new Error("Unsupported participation command");
   }

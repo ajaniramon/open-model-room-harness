@@ -1,5 +1,20 @@
 {
   "discord": {
+    "allowedGuildIds": [],
+    "allowedChannelIds": [],
+    "botFilter": {
+      "mode": "allowlist",
+      "userIds": []
+    },
+    "botLoopGuard": {
+      "enabled": true,
+      "maxConsecutive": 5,
+      "cooldownSeconds": 180
+    },
+    "emojiPalette": [
+      "<:example_one:123456789012345678>",
+      "<a:example_two:234567890123456789>"
+    ],
     "watchdog": {
       "enabled": false,
       "graceSeconds": 90,
@@ -45,10 +60,19 @@
     },
     "statePath": "state/participation-state.json"
   },
+  "ownerHeartbeat": {
+    "enabled": false,
+    "ownerUserId": "",
+    "minMinutes": 60,
+    "maxMinutes": 180,
+    "recentInteractionMinutes": 30,
+    "contextMessages": 8
+  },
   "runtimeControl": {
     "enabled": true,
     "statePath": "state/runtime-control.json",
     "restartEnabled": false,
+    "shutdownEnabled": false,
     "restartDelayMs": 750,
     "restartExitCode": 75,
     "allowUsernameFallback": true
@@ -90,8 +114,23 @@
     "maxContextChars": 12000,
     "leaseSeconds": 120,
     "maxAttempts": 3,
+    "ownerPriorityBurst": 3,
+    "humanPriorityBurst": 5,
     "maxImageAttachments": 4,
-    "maxAttachmentBytes": 8000000
+    "maxAudioAttachments": 2,
+    "maxTextAttachments": 4,
+    "maxAttachmentBytes": 8000000,
+    "maxAudioAttachmentBytes": 8000000,
+    "audioFetchTimeoutMs": 30000
+  },
+  "capabilityBroker": {
+    "enabled": false,
+    "baseUrl": "http://127.0.0.1:3400",
+    "ownerAudiences": ["filesystem", "execution", "discord"],
+    "publicAudiences": ["discord"],
+    "autonomousAudiences": ["filesystem", "execution", "discord"],
+    "timeoutMs": 5000,
+    "minGrantRemainingSeconds": 15
   },
   "memory": {
     "enabled": false,

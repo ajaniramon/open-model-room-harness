@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { AudioModeState, ElevenLabsTtsClient } from "./audio-mode.js";
 import { BehaviorModeController } from "./behavior-mode.js";
 import { ChatRelayQueue } from "./chat-relay.js";
+import { RelayCapabilityBrokerClient } from "./capability-broker-client.js";
 import { config } from "./config.js";
 import { CodexRunner } from "./codex-runner.js";
 import { createDiscordBot } from "./discord-bot.js";
@@ -91,6 +92,7 @@ const runtimeControl = config.runtimeControlEnabled
       behaviorModeController,
       auditLogger: runtimeControlAuditLogger,
       restartEnabled: config.runtimeControlRestartEnabled,
+      shutdownEnabled: config.runtimeControlShutdownEnabled,
     }).load()
   : null;
 await behaviorModeController.startWatching();
@@ -116,7 +118,11 @@ const memoryRetentionTimer = memoryStore
   : null;
 memoryRetentionTimer?.unref?.();
 const modelClient = new ModelClient(config, fetch, webTools);
-const chatRelay = await new ChatRelayQueue(config.chatRelay).load();
+const capabilityBroker = new RelayCapabilityBrokerClient(config.capabilityBroker);
+const chatRelay = await new ChatRelayQueue({
+  ...config.chatRelay,
+  authorityProvider: capabilityBroker.enabled ? capabilityBroker : null,
+}).load();
 const memoryDigester =
   memoryStore && config.memoryExtractionEnabled
     ? new MemoryDigester({
@@ -170,6 +176,13 @@ const requestRuntimeRestart = (reason = "owner runtime restart") => {
   );
   timer.unref();
 };
+const requestRuntimeShutdown = (reason = "owner runtime shutdown") => {
+  const timer = setTimeout(
+    () => shutdown(reason, 0),
+    config.runtimeControlRestartDelayMs,
+  );
+  timer.unref();
+};
 
 mcpControlServer = config.mcpControl.enabled
   ? (await import("./mcp-control-server.js")).startMcpControlServer({
@@ -206,6 +219,7 @@ client = createDiscordBot({
   behaviorModeController,
   chatRelay,
   requestRuntimeRestart,
+  requestRuntimeShutdown,
   systemPrompt,
 });
 discordWatchdog = new DiscordConnectivityWatchdog({

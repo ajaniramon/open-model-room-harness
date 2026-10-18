@@ -32,15 +32,18 @@ test("parses only exact runtime control commands", () => {
   assert.deepEqual(parseRuntimeControlCommand("@bot maintenance on"), { action: "maintenance_on" });
   assert.deepEqual(parseRuntimeControlCommand("<@123456789012345678> wake up"), { action: "maintenance_off" });
   assert.deepEqual(parseRuntimeControlCommand("restart runtime"), { action: "restart" });
+  assert.deepEqual(parseRuntimeControlCommand("@Gremy kill discord"), { action: "shutdown" });
+  assert.deepEqual(parseRuntimeControlCommand("<@123456789012345678> shutdown discord"), { action: "shutdown" });
   assert.deepEqual(parseRuntimeControlCommand("@bot status"), { action: "status" });
   assert.deepEqual(parseRuntimeControlCommand("@bot activa el modo mantenimiento"), { action: "maintenance_on" });
   assert.deepEqual(parseRuntimeControlCommand("@bot stealth mode on"), { action: "observation_on" });
   assert.deepEqual(parseRuntimeControlCommand("@bot observation off"), { action: "observation_off" });
   assert.equal(parseRuntimeControlCommand("@bot should we restart runtime later?"), null);
+  assert.equal(parseRuntimeControlCommand("@Gremy can you kill discord later?"), null);
   assert.equal(parseRuntimeControlCommand("@bot tell me about maintenance mode"), null);
 });
 
-test("requires a numeric owner ID for restart while allowing configured fallback elsewhere", () => {
+test("requires a numeric owner ID for restart and shutdown while allowing configured fallback elsewhere", () => {
   const config = {
     ownerUserIds: new Set(["123"]),
     ownerUsernames: new Set(["owner"]),
@@ -48,6 +51,8 @@ test("requires a numeric owner ID for restart while allowing configured fallback
   };
   assert.equal(isRuntimeControlAuthorized({ id: "123", username: "renamed" }, config, "restart"), true);
   assert.equal(isRuntimeControlAuthorized({ id: "999", username: "OWNER" }, config, "restart"), false);
+  assert.equal(isRuntimeControlAuthorized({ id: "123", username: "renamed" }, config, "shutdown"), true);
+  assert.equal(isRuntimeControlAuthorized({ id: "999", username: "OWNER" }, config, "shutdown"), false);
   assert.equal(isRuntimeControlAuthorized({ id: "999", username: "OWNER" }, config, "maintenance_on"), true);
   config.runtimeControlAllowUsernameFallback = false;
   assert.equal(isRuntimeControlAuthorized({ id: "999", username: "owner" }, config, "status"), false);
@@ -188,4 +193,21 @@ test("gates supervised restarts in configuration", async () => {
   assert.match((await disabled.execute({ action: "restart" })).response, /disabled/);
   const enabled = new RuntimeControl({ statePath: "unused", auditLogger, restartEnabled: true });
   assert.equal((await enabled.execute({ action: "restart" })).restart, true);
+});
+
+test("gates clean owner shutdown in configuration", async () => {
+  const events = [];
+  const auditLogger = {
+    log: async (event) => events.push(event),
+    close: async () => undefined,
+  };
+  const disabled = new RuntimeControl({ statePath: "unused", auditLogger });
+  assert.match((await disabled.execute({ action: "shutdown" })).response, /disabled/);
+  const enabled = new RuntimeControl({
+    statePath: "unused",
+    auditLogger,
+    shutdownEnabled: true,
+  });
+  assert.equal((await enabled.execute({ action: "shutdown" }, { userId: "123" })).shutdown, true);
+  assert.equal(events.some((event) => event.type === "runtime_shutdown_requested"), true);
 });

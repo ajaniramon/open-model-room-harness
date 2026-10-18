@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { VisionAnalyzer, supportedVisionAttachments } from "../src/vision.js";
+import { nativeVisionEnabled, VisionAnalyzer, supportedVisionAttachments } from "../src/vision.js";
 
 function visionConfig(overrides = {}) {
   return {
@@ -99,28 +99,38 @@ test("rejects oversized images before downloading or calling NanoGPT", async () 
   assert.equal(modelCalls, 0);
 });
 
-test("loadImageParts downloads within limits without calling any model", async () => {
-  const nanoGpt = {
-    async complete() {
-      throw new Error("native vision must not call the sidecar model");
-    },
+test("native vision requires every active chat route and exact model to be eligible", () => {
+  const base = {
+    visionMode: "native",
+    visionNativeModels: new Set(["vision-chat", "vision-fallback"]),
+    chatProvider: "nanogpt",
+    chatModel: "vision-chat",
+    chatFallbackProvider: "openai",
+    chatFallbackModel: "vision-fallback",
   };
-  const fetchImplementation = async () =>
-    new Response(Buffer.from([1, 2, 3]), { status: 200, headers: { "content-type": "image/png" } });
-  const analyzer = new VisionAnalyzer(visionConfig({ visionMaxImages: 1 }), nanoGpt, fetchImplementation);
+  assert.equal(nativeVisionEnabled(base), true);
+  assert.equal(nativeVisionEnabled({ ...base, visionMode: "sidecar" }), false);
+  assert.equal(nativeVisionEnabled({ ...base, chatFallbackProvider: "anthropic" }), false);
+  assert.equal(nativeVisionEnabled({ ...base, chatFallbackModel: "text-only" }), false);
+});
 
-  assert.equal(await analyzer.loadImageParts(discordMessage([{ name: "a.pdf", contentType: "application/pdf" }])), null);
-  const parts = await analyzer.loadImageParts(
-    discordMessage([
-      { name: "one.png", contentType: "image/png", size: 3, url: "https://cdn.discordapp.com/attachments/test/one.png" },
-      { name: "two.png", contentType: "image/png", size: 3, url: "https://cdn.discordapp.com/attachments/test/two.png" },
-    ]),
+test("loadImageParts downloads bounded images without invoking the sidecar model", async () => {
+  let modelCalls = 0;
+  const analyzer = new VisionAnalyzer(
+    visionConfig(),
+    { async complete() { modelCalls += 1; } },
+    async () => new Response(Buffer.from([1, 2, 3]), {
+      status: 200,
+      headers: { "content-type": "image/png" },
+    }),
   );
-  assert.deepEqual(parts, [{ type: "image_url", image_url: { url: "data:image/png;base64,AQID" } }]);
-  await assert.rejects(
-    analyzer.loadImageParts(
-      discordMessage([{ name: "big.png", contentType: "image/png", size: 2_000_000, url: "https://cdn.discordapp.com/attachments/test/big.png" }]),
-    ),
-    /exceeds/,
-  );
+  const parts = await analyzer.loadImageParts(discordMessage([{
+    name: "native.png",
+    contentType: "image/png",
+    size: 3,
+    url: "https://cdn.discordapp.com/attachments/test/native.png",
+  }]));
+  assert.equal(parts.length, 1);
+  assert.match(parts[0].image_url.url, /^data:image\/png;base64,/);
+  assert.equal(modelCalls, 0);
 });

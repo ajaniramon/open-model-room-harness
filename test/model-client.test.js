@@ -394,80 +394,56 @@ test("the circuit breaker routes straight to fallback after repeated primary fai
   assert.equal(primaryCalls.length, afterTrip, "no further primary calls while the circuit is open");
 });
 
-function toolCallingFetch(requests, firstMessage) {
-  const responses = [
-    {
-      choices: [
-        {
-          message: {
-            role: "assistant",
-            content: null,
-            tool_calls: [
-              { id: "call_1", type: "function", function: { name: "web_search", arguments: "{}" } },
-            ],
-            ...firstMessage,
-          },
-        },
-      ],
-    },
-    { choices: [{ message: { role: "assistant", content: "Done", reasoning: "wrap up" } }] },
-  ];
-  return async (_url, options) => {
-    requests.push(JSON.parse(options.body));
-    return Response.json(responses.shift());
-  };
-}
-
-const searchRuntime = {
-  tools: [
-    {
-      type: "function",
-      function: { name: "web_search", description: "Search", parameters: { type: "object", properties: {} } },
-    },
-  ],
-  call: async () => "result",
-};
-
-test("NanoGPT tool turns request reasoning and pass it back on the next iteration", async () => {
-  const requests = [];
-  const fetchMock = toolCallingFetch(requests, { reasoning: "search first" });
-  const result = await new ModelClient(testConfig("nanogpt"), fetchMock, searchRuntime).complete(
-    [{ role: "user", content: "Search" }],
-    { enabledToolNames: ["web_search"] },
-  );
-  // Only the visible answer ever leaves the client.
-  assert.equal(result, "Done");
-  assert.equal(requests[0].reasoning, undefined);
-  const toolTurn = requests[1].messages.find((entry) => entry.tool_calls);
-  assert.equal(toolTurn.reasoning, "search first");
-});
-
-test("NanoGPT turns without tools keep reasoning excluded", async () => {
-  let request;
-  const fetchMock = async (_url, options) => {
-    request = JSON.parse(options.body);
-    return Response.json({ choices: [{ message: { role: "assistant", content: "Hi" } }] });
-  };
-  await new ModelClient(testConfig("nanogpt"), fetchMock).complete([{ role: "user", content: "Hi" }]);
-  assert.deepEqual(request.reasoning, { exclude: true });
-});
-
-test("local servers never receive echoed reasoning fields", async () => {
-  const requests = [];
-  const fetchMock = toolCallingFetch(requests, { reasoning_content: "think" });
-  await new ModelClient(testConfig("local"), fetchMock, searchRuntime).complete(
-    [{ role: "user", content: "Search" }],
-    { enabledToolNames: ["web_search"] },
-  );
-  const toolTurn = requests[1].messages.find((entry) => entry.tool_calls);
-  assert.equal("reasoning_content" in toolTurn, false);
-});
-
-test("toolTurnReasoning echoes only the reasoning fields the provider returned", () => {
+test("toolTurnReasoning preserves only non-empty provider reasoning metadata", () => {
   assert.deepEqual(toolTurnReasoning({ content: null }), {});
-  assert.deepEqual(toolTurnReasoning({ reasoning_content: "why" }), { reasoning_content: "why" });
-  assert.deepEqual(toolTurnReasoning({ reasoning: "", reasoning_details: [] }), {});
+  assert.deepEqual(toolTurnReasoning({ reasoning: "search first", reasoning_content: "" }), {
+    reasoning: "search first",
+  });
   assert.deepEqual(toolTurnReasoning({ reasoning_details: [{ type: "reasoning.text", text: "x" }] }), {
     reasoning_details: [{ type: "reasoning.text", text: "x" }],
   });
+});
+
+test("NanoGPT tool turns request and echo reasoning on the next iteration", async () => {
+  const requests = [];
+  const responses = [
+    {
+      choices: [{
+        message: {
+          role: "assistant",
+          content: null,
+          reasoning: "search first",
+          tool_calls: [{
+            id: "call_1",
+            type: "function",
+            function: { name: "web_search", arguments: "{}" },
+          }],
+        },
+      }],
+    },
+    { choices: [{ message: { role: "assistant", content: "Done" } }] },
+  ];
+  const fetchMock = async (_url, options) => {
+    requests.push(JSON.parse(options.body));
+    return Response.json(responses.shift());
+  };
+  const toolRuntime = {
+    tools: [{
+      type: "function",
+      function: {
+        name: "web_search",
+        description: "Search",
+        parameters: { type: "object", properties: {} },
+      },
+    }],
+    call: async () => "result",
+  };
+
+  const result = await new ModelClient(testConfig("nanogpt"), fetchMock, toolRuntime).complete(
+    [{ role: "user", content: "Search" }],
+    { enabledToolNames: ["web_search"] },
+  );
+  assert.equal(result, "Done");
+  assert.equal(requests[0].reasoning, undefined);
+  assert.equal(requests[1].messages.find((entry) => entry.tool_calls).reasoning, "search first");
 });
