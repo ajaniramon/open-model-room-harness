@@ -215,7 +215,7 @@ function render(locale) {
         </div>
         <div class="command-window">
           <div class="window-bar"><span></span><span></span><span></span><b>dev-room</b></div>
-          ${t.commands.items.map((command) => `<p><strong>@JJ</strong> ${escapeHtml(command)}</p>`).join("")}
+          ${t.commands.items.map((command) => `<p><strong>@YourBot</strong> ${escapeHtml(command)}</p>`).join("")}
         </div>
       </section>
 

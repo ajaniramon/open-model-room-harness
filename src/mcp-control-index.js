@@ -1,12 +1,12 @@
-import { existsSync } from "node:fs";
-import { config as loadEnv } from "dotenv";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AudioModeState } from "./audio-mode.js";
 import { BehaviorModeController } from "./behavior-mode.js";
 import { ChatRelayQueue } from "./chat-relay.js";
+import { RelayCapabilityBrokerClient } from "./capability-broker-client.js";
 import { normalizeDiscordScopes } from "./discord-scopes.js";
 import { loadJsonConfig, setting } from "./config-source.js";
+import { loadWorkspaceEnvironment } from "./environment.js";
 import { MemoryStore } from "./memory-store.js";
 import { startMcpControlServer } from "./mcp-control-server.js";
 import {
@@ -16,11 +16,7 @@ import {
 import { RuntimeControl } from "./runtime-control.js";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const controlEnvPath = resolve(projectRoot, ".env.control");
-loadEnv({
-  path: existsSync(controlEnvPath) ? controlEnvPath : resolve(projectRoot, ".env"),
-  quiet: true,
-});
+loadWorkspaceEnvironment(projectRoot, { control: true });
 
 function boolean(name, fallback = false) {
   const raw = process.env[name];
@@ -168,6 +164,12 @@ const runtimeControl = await new RuntimeControl({
     "JJ_RUNTIME_CONTROL_RESTART_ENABLED",
     false,
   ),
+  shutdownEnabled: configuredBoolean(
+    jsonConfig,
+    "runtimeControl.shutdownEnabled",
+    "JJ_RUNTIME_CONTROL_SHUTDOWN_ENABLED",
+    false,
+  ),
 }).load();
 
 const memoryEnabled = configuredBoolean(jsonConfig, "memory.enabled", "JJ_MEMORY_ENABLED", false);
@@ -204,6 +206,18 @@ await audioModeState.load();
 const audioConfigured = Boolean(
   process.env.ELEVENLABS_API_KEY?.trim() && process.env.ELEVENLABS_VOICE_ID?.trim(),
 );
+const capabilityBroker = new RelayCapabilityBrokerClient({
+  enabled: configuredBoolean(jsonConfig, "capabilityBroker.enabled", "CAPABILITY_BROKER_ENABLED", false),
+  baseUrl: String(configured(jsonConfig, "capabilityBroker.baseUrl", "CAPABILITY_BROKER_URL", "http://127.0.0.1:3400")),
+  discordIngressToken: process.env.BROKER_DISCORD_INGRESS_TOKEN?.trim() || "",
+  autonomousIngressToken: process.env.BROKER_AUTONOMOUS_INGRESS_TOKEN?.trim() || "",
+  exchangeToken: process.env.BROKER_EXCHANGE_TOKEN?.trim() || "",
+  ownerAudiences: configuredList(jsonConfig, "capabilityBroker.ownerAudiences", "CAPABILITY_BROKER_OWNER_AUDIENCES", ["filesystem", "execution", "discord"]),
+  publicAudiences: configuredList(jsonConfig, "capabilityBroker.publicAudiences", "CAPABILITY_BROKER_PUBLIC_AUDIENCES", ["discord"]),
+  autonomousAudiences: configuredList(jsonConfig, "capabilityBroker.autonomousAudiences", "CAPABILITY_BROKER_AUTONOMOUS_AUDIENCES", ["filesystem", "execution", "discord"]),
+  timeoutMs: configuredInteger(jsonConfig, "capabilityBroker.timeoutMs", "CAPABILITY_BROKER_TIMEOUT_MS", 5_000, { min: 500, max: 30_000 }),
+  minGrantRemainingMs: configuredInteger(jsonConfig, "capabilityBroker.minGrantRemainingSeconds", "CAPABILITY_BROKER_MIN_GRANT_REMAINING_SECONDS", 15, { min: 0, max: 300 }) * 1_000,
+});
 const chatRelay = new ChatRelayQueue({
   enabled: configuredBoolean(jsonConfig, "chatRelay.enabled", "CHAT_RELAY_ENABLED", false),
   statePath: resolve(
@@ -233,10 +247,38 @@ const chatRelay = new ChatRelayQueue({
     min: 1,
     max: 20,
   }),
+  ownerPriorityBurst: configuredInteger(
+    jsonConfig,
+    "chatRelay.ownerPriorityBurst",
+    "CHAT_RELAY_OWNER_PRIORITY_BURST",
+    3,
+    { min: 1, max: 20 },
+  ),
+  humanPriorityBurst: configuredInteger(
+    jsonConfig,
+    "chatRelay.humanPriorityBurst",
+    "CHAT_RELAY_HUMAN_PRIORITY_BURST",
+    5,
+    { min: 1, max: 50 },
+  ),
   maxImageAttachments: configuredInteger(
     jsonConfig,
     "chatRelay.maxImageAttachments",
     "CHAT_RELAY_MAX_IMAGE_ATTACHMENTS",
+    4,
+    { min: 0, max: 10 },
+  ),
+  maxAudioAttachments: configuredInteger(
+    jsonConfig,
+    "chatRelay.maxAudioAttachments",
+    "CHAT_RELAY_MAX_AUDIO_ATTACHMENTS",
+    2,
+    { min: 0, max: 10 },
+  ),
+  maxTextAttachments: configuredInteger(
+    jsonConfig,
+    "chatRelay.maxTextAttachments",
+    "CHAT_RELAY_MAX_TEXT_ATTACHMENTS",
     4,
     { min: 0, max: 10 },
   ),
@@ -247,6 +289,21 @@ const chatRelay = new ChatRelayQueue({
     8_000_000,
     { min: 1_024, max: 20_000_000 },
   ),
+  maxAudioAttachmentBytes: configuredInteger(
+    jsonConfig,
+    "chatRelay.maxAudioAttachmentBytes",
+    "CHAT_RELAY_MAX_AUDIO_ATTACHMENT_BYTES",
+    8_000_000,
+    { min: 1_024, max: 20_000_000 },
+  ),
+  audioFetchTimeoutMs: configuredInteger(
+    jsonConfig,
+    "chatRelay.audioFetchTimeoutMs",
+    "CHAT_RELAY_AUDIO_FETCH_TIMEOUT_MS",
+    30_000,
+    { min: 1_000, max: 120_000 },
+  ),
+  authorityProvider: capabilityBroker.enabled ? capabilityBroker : null,
 });
 // This standalone control process has no Discord client, so it cannot deliver
 // relay replies and must never own the relay state file: two processes each
@@ -283,7 +340,11 @@ const server = startMcpControlServer({
       maxContextChars: chatRelay.maxContextChars,
       leaseSeconds: chatRelay.leaseSeconds,
       maxAttempts: chatRelay.maxAttempts,
+      ownerPriorityBurst: chatRelay.ownerPriorityBurst,
+      humanPriorityBurst: chatRelay.humanPriorityBurst,
       maxImageAttachments: chatRelay.maxImageAttachments,
+      maxAudioAttachments: chatRelay.maxAudioAttachments,
+      maxTextAttachments: chatRelay.maxTextAttachments,
       maxAttachmentBytes: chatRelay.maxAttachmentBytes,
     },
     discordEmojiPalette: configuredList(jsonConfig, "discord.emojiPalette", "DISCORD_EMOJI_PALETTE")
@@ -292,8 +353,10 @@ const server = startMcpControlServer({
       .slice(0, 8),
     discordScopes: normalizeDiscordScopes(configured(jsonConfig, "discord.scopes", "JJ_DISCORD_SCOPES", {})),
     codexExecutable: process.env.JJ_CODEX_EXECUTABLE?.trim() || "",
+    allowedGuildIds: new Set(configuredList(jsonConfig, "discord.allowedGuildIds", "JJ_ALLOWED_GUILD_IDS")),
     allowedChannelIds: new Set(configuredList(jsonConfig, "discord.allowedChannelIds", "JJ_ALLOWED_CHANNEL_IDS")),
     ownerUserIds: new Set(configuredList(jsonConfig, "permissions.owner.allowedUserIds", "JJ_OWNER_USER_IDS")),
+    capabilityIntrospectionToken: process.env.MCP_CAPABILITY_INTROSPECTION_TOKEN?.trim() || "",
     ownerUsernames: new Set(configuredList(jsonConfig, "permissions.owner.allowedUsernames", "JJ_OWNER_USERNAMES")),
     webAllowedUserIds: new Set(configuredList(jsonConfig, "permissions.web.allowedUserIds", "JJ_WEB_ALLOWED_USER_IDS")),
     webAllowedUsernames: new Set(configuredList(jsonConfig, "permissions.web.allowedUsernames", "JJ_WEB_ALLOWED_USERNAMES")),

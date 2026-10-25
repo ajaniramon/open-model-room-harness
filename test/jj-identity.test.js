@@ -10,5 +10,5 @@ test("shares the customizable visual identity with conversation and image prompt
   assert.match(JJ_VISUAL_IDENTITY, /customizable adult AI team-lead character/);
   assert.match(JJ_VISUAL_IDENTITY_SYSTEM_SECTION, /customizable adult AI team-lead character/);
   assert.match(IMAGE_PROMPT_SYSTEM_PROMPT, /customizable adult AI team-lead character/);
-  assert.match(IMAGE_PROMPT_SYSTEM_PROMPT, /Do not insert JJ/);
+  assert.match(IMAGE_PROMPT_SYSTEM_PROMPT, /Do not insert the assistant/);
 });

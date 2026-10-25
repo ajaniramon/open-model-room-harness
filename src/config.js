@@ -1,10 +1,10 @@
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { config as loadEnv } from "dotenv";
 import { DEFAULT_BEHAVIOR_MODE_SETTINGS } from "./behavior-mode.js";
 import { normalizeDiscordScopes } from "./discord-scopes.js";
 import { loadJsonConfig, setting } from "./config-source.js";
+import { loadWorkspaceEnvironment } from "./environment.js";
 import { resolveTimeZone } from "./message-time.js";
 import { normalizeParticipationPolicy } from "./participation-policy.js";
 import {
@@ -13,9 +13,15 @@ import {
 } from "./openai-compatible.js";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-loadEnv({ path: resolve(projectRoot, ".env"), quiet: true });
+const runningUnderNodeTest =
+  process.env.NODE_TEST_CONTEXT !== undefined ||
+  process.execArgv.includes("--test") ||
+  process.argv.some((argument) => argument === "--test");
+if (!runningUnderNodeTest) {
+  loadWorkspaceEnvironment(projectRoot);
+}
 const configPath = resolve(projectRoot, "config.json");
-const jsonConfig = loadJsonConfig(configPath);
+const jsonConfig = runningUnderNodeTest ? {} : loadJsonConfig(configPath);
 
 function configured(path, environmentName, fallback) {
   return setting(jsonConfig, path, environmentName, fallback);
@@ -70,17 +76,16 @@ const chatProvider = process.env.MODEL_PROVIDER?.trim().toLowerCase() || "nanogp
 if (!new Set(["none", "nanogpt", "openai", "anthropic", "xai", "gemini", "local"]).has(chatProvider)) {
   throw new Error("MODEL_PROVIDER must be one of: none, nanogpt, openai, anthropic, xai, gemini, local");
 }
-// Opt-in fallback for the default conversation route: when the primary inference
-// call fails after its retry, the turn is repeated once on this route instead of
-// surfacing an error message in Discord. Empty means disabled.
-// "sidecar" (default) inspects images with the vision model and hands the bot a
-// bounded text report; "native" attaches the triggering message's images directly
-// when the chat route's model is listed in vision.nativeModels (see vision.js).
+// Sidecar vision is the compatibility default. Native mode is separately guarded
+// by an exact model allowlist because provider support alone does not prove that a
+// particular conversational model accepts image parts.
 const visionMode = String(configured("vision.mode", "JJ_VISION_MODE", "sidecar")).trim().toLowerCase();
 if (!new Set(["sidecar", "native"]).has(visionMode)) {
   throw new Error("vision.mode (JJ_VISION_MODE) must be 'sidecar' or 'native'");
 }
-
+// Opt-in fallback for the default conversation route: when the primary inference
+// call fails after its retry, the turn is repeated once on this route instead of
+// surfacing an error message in Discord. Empty means disabled.
 const chatFallbackProvider = process.env.MODEL_FALLBACK_PROVIDER?.trim().toLowerCase() || "";
 if (
   chatFallbackProvider &&
@@ -137,6 +142,68 @@ const behaviorModeAutoMaxRepliesPerHour = configuredInteger(
   { min: 0, max: 500 },
 );
 const mcpControlEnabled = configuredBoolean("mcpControl.enabled", "MCP_CONTROL_ENABLED", false);
+const legacyRespondToBots = enabled("JJ_RESPOND_TO_BOTS");
+const legacyAllowedBotUserIds = configuredList(
+  "discord.allowedBotUserIds",
+  "JJ_ALLOWED_BOT_USER_IDS",
+);
+const botFilterMode = String(configured(
+  "discord.botFilter.mode",
+  "JJ_BOT_FILTER_MODE",
+  legacyRespondToBots ? "blocklist" : "allowlist",
+)).trim().toLowerCase();
+if (!new Set(["allowlist", "blocklist"]).has(botFilterMode)) {
+  throw new Error(
+    "discord.botFilter.mode (JJ_BOT_FILTER_MODE) must be 'allowlist' or 'blocklist'",
+  );
+}
+const botFilterUserIds = configuredList(
+  "discord.botFilter.userIds",
+  "JJ_BOT_USER_IDS",
+  botFilterMode === "allowlist" ? legacyAllowedBotUserIds : [],
+);
+const botLoopGuardEnabled = configuredBoolean(
+  "discord.botLoopGuard.enabled",
+  "JJ_BOT_LOOP_GUARD_ENABLED",
+  true,
+);
+
+const ownerUserIdEntries = configuredList(
+  "permissions.owner.allowedUserIds",
+  "JJ_OWNER_USER_IDS",
+  "",
+);
+const ownerHeartbeatEnabled = configuredBoolean(
+  "ownerHeartbeat.enabled",
+  "JJ_OWNER_HEARTBEAT_ENABLED",
+  false,
+);
+const ownerHeartbeatUserId = String(configured(
+  "ownerHeartbeat.ownerUserId",
+  "JJ_OWNER_HEARTBEAT_USER_ID",
+  ownerUserIdEntries.length === 1 ? ownerUserIdEntries[0] : "",
+)).trim();
+const ownerHeartbeatMinMinutes = configuredInteger(
+  "ownerHeartbeat.minMinutes",
+  "JJ_OWNER_HEARTBEAT_MIN_MINUTES",
+  60,
+  { min: 1, max: 10_080 },
+);
+const ownerHeartbeatMaxMinutes = configuredInteger(
+  "ownerHeartbeat.maxMinutes",
+  "JJ_OWNER_HEARTBEAT_MAX_MINUTES",
+  180,
+  { min: 1, max: 10_080 },
+);
+if (ownerHeartbeatMaxMinutes < ownerHeartbeatMinMinutes) {
+  throw new Error("ownerHeartbeat.maxMinutes must be at least ownerHeartbeat.minMinutes");
+}
+if (ownerHeartbeatEnabled && !/^\d{15,22}$/.test(ownerHeartbeatUserId)) {
+  throw new Error("Enabled owner heartbeat requires one numeric ownerHeartbeat.ownerUserId (JJ_OWNER_HEARTBEAT_USER_ID)");
+}
+if (ownerHeartbeatEnabled && !ownerUserIdEntries.includes(ownerHeartbeatUserId)) {
+  throw new Error("ownerHeartbeat.ownerUserId must also be listed in permissions.owner.allowedUserIds (JJ_OWNER_USER_IDS)");
+}
 
 const participationPolicy = normalizeParticipationPolicy({
   enabled: configuredBoolean("participation.enabled", "JJ_PARTICIPATION_ENABLED", true),
@@ -331,6 +398,9 @@ export const config = Object.freeze({
     process.env.NANOGPT_BASE_URL?.trim() ||
     "https://nano-gpt.com/api/subscription/v1/chat/completions",
   triggerMode,
+  allowedGuildIds: new Set(
+    configuredList("discord.allowedGuildIds", "JJ_ALLOWED_GUILD_IDS"),
+  ),
   allowedChannelIds: new Set(
     configuredList("discord.allowedChannelIds", "JJ_ALLOWED_CHANNEL_IDS"),
   ),
@@ -509,13 +579,8 @@ export const config = Object.freeze({
       .map((value) => value.trim().toLowerCase())
       .filter(Boolean),
   ),
-  ownerUserIds: new Set(
-    configuredList(
-      "permissions.owner.allowedUserIds",
-      "JJ_OWNER_USER_IDS",
-      process.env.JJ_CODEX_ALLOWED_USER_IDS || process.env.JJ_WEB_ALLOWED_USER_IDS || "",
-    ),
-  ),
+  ownerUserIds: new Set(ownerUserIdEntries),
+  capabilityIntrospectionToken: process.env.MCP_CAPABILITY_INTROSPECTION_TOKEN?.trim() || "",
   ownerUsernames: new Set(
     configuredList(
       "permissions.owner.allowedUsernames",
@@ -528,7 +593,26 @@ export const config = Object.freeze({
     min: 128,
     max: 32_768,
   }),
-  respondToBots: enabled("JJ_RESPOND_TO_BOTS"),
+  botFilterMode,
+  botUserIds: new Set(botFilterUserIds),
+  botLoopGuard: Object.freeze({
+    enabled: botLoopGuardEnabled,
+    maxConsecutive: configuredInteger(
+      "discord.botLoopGuard.maxConsecutive",
+      "JJ_BOT_LOOP_GUARD_MAX_CONSECUTIVE",
+      5,
+      { min: 1, max: 100 },
+    ),
+    cooldownSeconds: configuredInteger(
+      "discord.botLoopGuard.cooldownSeconds",
+      "JJ_BOT_LOOP_GUARD_COOLDOWN_SECONDS",
+      180,
+      { min: 1, max: 86_400 },
+    ),
+  }),
+  // Compatibility fields for integrations that still inspect the legacy shape.
+  respondToBots: legacyRespondToBots,
+  allowedBotUserIds: new Set(legacyAllowedBotUserIds),
   contextMessages: integer("JJ_CONTEXT_MESSAGES", 24, { min: 1, max: 75 }),
   contextTimestamps: enabled("JJ_CONTEXT_TIMESTAMPS", true),
   timeZone,
@@ -537,6 +621,24 @@ export const config = Object.freeze({
   apiTimeoutMs: integer("JJ_API_TIMEOUT_MS", 120_000, { min: 5_000, max: 300_000 }),
   maxToolIterations: integer("JJ_MAX_TOOL_ITERATIONS", 4, { min: 1, max: 8 }),
   participationPolicy: Object.freeze(participationPolicy),
+  ownerHeartbeat: Object.freeze({
+    enabled: ownerHeartbeatEnabled,
+    ownerUserId: ownerHeartbeatUserId,
+    minMinutes: ownerHeartbeatMinMinutes,
+    maxMinutes: ownerHeartbeatMaxMinutes,
+    recentInteractionMinutes: configuredInteger(
+      "ownerHeartbeat.recentInteractionMinutes",
+      "JJ_OWNER_HEARTBEAT_RECENT_INTERACTION_MINUTES",
+      30,
+      { min: 0, max: 10_080 },
+    ),
+    contextMessages: configuredInteger(
+      "ownerHeartbeat.contextMessages",
+      "JJ_OWNER_HEARTBEAT_CONTEXT_MESSAGES",
+      8,
+      { min: 1, max: 50 },
+    ),
+  }),
   participationStatePath: resolve(
     projectRoot,
     String(configured("participation.statePath", "JJ_PARTICIPATION_STATE_PATH", "state/participation-state.json")),
@@ -582,8 +684,22 @@ export const config = Object.freeze({
     bearerToken: String(configured("mcpControl.bearerToken", "MCP_CONTROL_BEARER_TOKEN", "")),
     wakeToken: String(configured("mcpControl.wakeToken", "MCP_CONTROL_WAKE_TOKEN", "")),
   }),
+  capabilityBroker: Object.freeze({
+    enabled: configuredBoolean("capabilityBroker.enabled", "CAPABILITY_BROKER_ENABLED", false),
+    baseUrl: String(configured("capabilityBroker.baseUrl", "CAPABILITY_BROKER_URL", "http://127.0.0.1:3400")),
+    discordIngressToken: process.env.BROKER_DISCORD_INGRESS_TOKEN?.trim() || "",
+    autonomousIngressToken: process.env.BROKER_AUTONOMOUS_INGRESS_TOKEN?.trim() || "",
+    exchangeToken: process.env.BROKER_EXCHANGE_TOKEN?.trim() || "",
+    ownerAudiences: configuredList("capabilityBroker.ownerAudiences", "CAPABILITY_BROKER_OWNER_AUDIENCES", ["filesystem", "execution", "discord"]),
+    publicAudiences: configuredList("capabilityBroker.publicAudiences", "CAPABILITY_BROKER_PUBLIC_AUDIENCES", ["discord"]),
+    autonomousAudiences: configuredList("capabilityBroker.autonomousAudiences", "CAPABILITY_BROKER_AUTONOMOUS_AUDIENCES", ["filesystem", "execution", "discord"]),
+    timeoutMs: configuredInteger("capabilityBroker.timeoutMs", "CAPABILITY_BROKER_TIMEOUT_MS", 5_000, { min: 500, max: 30_000 }),
+    minGrantRemainingMs: configuredInteger("capabilityBroker.minGrantRemainingSeconds", "CAPABILITY_BROKER_MIN_GRANT_REMAINING_SECONDS", 15, { min: 0, max: 300 }) * 1_000,
+  }),
   chatRelay: Object.freeze({
     enabled: configuredBoolean("chatRelay.enabled", "CHAT_RELAY_ENABLED", false),
+    fastLaneGuildId: String(configured("chatRelay.fastLaneGuildId", "CHAT_RELAY_FAST_LANE_GUILD_ID", "")).trim(),
+    fastLaneChannelId: String(configured("chatRelay.fastLaneChannelId", "CHAT_RELAY_FAST_LANE_CHANNEL_ID", "")).trim(),
     statePath: resolve(
       projectRoot,
       String(configured("chatRelay.statePath", "CHAT_RELAY_STATE_PATH", "state/chat-relay.json")),
@@ -610,9 +726,33 @@ export const config = Object.freeze({
       min: 1,
       max: 20,
     }),
+    ownerPriorityBurst: configuredInteger(
+      "chatRelay.ownerPriorityBurst",
+      "CHAT_RELAY_OWNER_PRIORITY_BURST",
+      3,
+      { min: 1, max: 20 },
+    ),
+    humanPriorityBurst: configuredInteger(
+      "chatRelay.humanPriorityBurst",
+      "CHAT_RELAY_HUMAN_PRIORITY_BURST",
+      5,
+      { min: 1, max: 50 },
+    ),
     maxImageAttachments: configuredInteger(
       "chatRelay.maxImageAttachments",
       "CHAT_RELAY_MAX_IMAGE_ATTACHMENTS",
+      4,
+      { min: 0, max: 10 },
+    ),
+    maxAudioAttachments: configuredInteger(
+      "chatRelay.maxAudioAttachments",
+      "CHAT_RELAY_MAX_AUDIO_ATTACHMENTS",
+      2,
+      { min: 0, max: 10 },
+    ),
+    maxTextAttachments: configuredInteger(
+      "chatRelay.maxTextAttachments",
+      "CHAT_RELAY_MAX_TEXT_ATTACHMENTS",
       4,
       { min: 0, max: 10 },
     ),
@@ -621,6 +761,18 @@ export const config = Object.freeze({
       "CHAT_RELAY_MAX_ATTACHMENT_BYTES",
       8_000_000,
       { min: 1_024, max: 20_000_000 },
+    ),
+    maxAudioAttachmentBytes: configuredInteger(
+      "chatRelay.maxAudioAttachmentBytes",
+      "CHAT_RELAY_MAX_AUDIO_ATTACHMENT_BYTES",
+      8_000_000,
+      { min: 1_024, max: 20_000_000 },
+    ),
+    audioFetchTimeoutMs: configuredInteger(
+      "chatRelay.audioFetchTimeoutMs",
+      "CHAT_RELAY_AUDIO_FETCH_TIMEOUT_MS",
+      30_000,
+      { min: 1_000, max: 120_000 },
     ),
   }),
   discordWatchdog: Object.freeze({
@@ -680,14 +832,34 @@ export const config = Object.freeze({
   memoryInjectionMaxItems: configuredInteger(
     "memory.injection.maxItems",
     "JJ_MEMORY_INJECTION_MAX_ITEMS",
-    60,
+    40,
     { min: 1, max: 2_000 },
   ),
   memoryInjectionMaxChars: configuredInteger(
     "memory.injection.maxChars",
     "JJ_MEMORY_INJECTION_MAX_CHARS",
-    12_000,
-    { min: 100, max: 400_000 },
+    6_000,
+    // The upper bound is deliberately conservative: the stable core is injected on
+    // every request, so a fat-fingered value here is billed on every turn.
+    { min: 100, max: 60_000 },
+  ),
+  memoryInjectionPerSubjectMaxItems: configuredInteger(
+    "memory.injection.perSubjectMaxItems",
+    "JJ_MEMORY_INJECTION_PER_SUBJECT_MAX_ITEMS",
+    6,
+    { min: 1, max: 200 },
+  ),
+  memoryFocusMaxItems: configuredInteger(
+    "memory.injection.focus.maxItems",
+    "JJ_MEMORY_FOCUS_MAX_ITEMS",
+    6,
+    { min: 0, max: 50 },
+  ),
+  memoryFocusMaxChars: configuredInteger(
+    "memory.injection.focus.maxChars",
+    "JJ_MEMORY_FOCUS_MAX_CHARS",
+    1_500,
+    { min: 0, max: 20_000 },
   ),
   // Passive capture is a second, separate switch: enabling memory alone only gives
   // the explicit "remember this" commands.
@@ -773,6 +945,11 @@ export const config = Object.freeze({
   runtimeControlRestartEnabled: configuredBoolean(
     "runtimeControl.restartEnabled",
     "JJ_RUNTIME_CONTROL_RESTART_ENABLED",
+    false,
+  ),
+  runtimeControlShutdownEnabled: configuredBoolean(
+    "runtimeControl.shutdownEnabled",
+    "JJ_RUNTIME_CONTROL_SHUTDOWN_ENABLED",
     false,
   ),
   runtimeControlRestartDelayMs: configuredInteger(

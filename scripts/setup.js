@@ -238,7 +238,7 @@ while (!ownerId && !ownerUsername) {
   ownerUsername = await ask("Owner Discord username (fallback)");
 }
 
-const botName = await ask("Bot character name", "JJ");
+const botName = await ask("Bot character name", "Assistant");
 const visualIdentity = await ask(
   "Canonical visual identity (one line, optional)",
   "A distinctive adult AI engineering team lead; customize this description.",

@@ -127,6 +127,24 @@ The GUI asks for:
 
 Secrets are written only to `.env`, which is ignored by Git.
 
+The project-local `.env` is enough for a normal installation. Deployments that
+already keep secrets or program settings in external environment files may point
+the harness at them with `AI_WORKSPACE_SECRETS_ENV` and
+`AI_WORKSPACE_PROGRAMS_ENV`. Both are optional; values already loaded from those
+files take precedence, and `.env` fills any remaining settings.
+
+Set these variables in the service manager or in the shell that starts the
+harness—never in a committed launcher. For example, in a PowerShell session:
+
+```powershell
+$env:AI_WORKSPACE_SECRETS_ENV = "<absolute path to private secrets.env>"
+$env:AI_WORKSPACE_PROGRAMS_ENV = "<absolute path to private programs.env>"
+npm start
+```
+
+Use paths appropriate for your machine, restrict access to the files, and do not
+commit either file or its path if the path reveals private infrastructure.
+
 ## Model providers
 
 The primary conversation model is selected during setup and can be changed later
@@ -218,22 +236,27 @@ same-user conversation window. Once that window expires, replies alone do not by
 the new-mention requirement. `JJ_TRIGGER_MODE` remains the legacy fallback when the
 participation governor is disabled.
 
+For temporary focus locks, use `JJ_ALLOWED_GUILD_IDS` for Discord server IDs and
+`JJ_ALLOWED_CHANNEL_IDS` for channel IDs. When a channel allowlist is set, messages
+outside those channels are ignored before memory capture, spontaneous participation,
+or command handling; DMs remain available.
+
 ## Example commands
 
 ```text
-@JJ search the web for the latest Node.js release notes
-@JJ search X for posts about local AI agents
-@JJ read https://x.com/jack/status/20
-@JJ escalate to kimi-k3 :: review this deployment plan
-@JJ escalate to grok-4.5 :: challenge the assumptions in this design
-@JJ spawn codex :: inspect this workspace and run the tests
-@JJ CODEX YOLO :: find the target repository, implement the requested change, and run its tests
-@JJ enable audio mode
-@JJ draw a picture of the current situation
-@JJ generate an image using model nano-banana-2-lite :: a goblin SRE
-@JJ maintenance on
-@JJ wake
-@JJ status
+@YourBot search the web for the latest Node.js release notes
+@YourBot search X for posts about local AI agents
+@YourBot read https://x.com/jack/status/20
+@YourBot escalate to kimi-k3 :: review this deployment plan
+@YourBot escalate to grok-4.5 :: challenge the assumptions in this design
+@YourBot spawn codex :: inspect this workspace and run the tests
+@YourBot CODEX YOLO :: find the target repository, implement the requested change, and run its tests
+@YourBot enable audio mode
+@YourBot draw a picture of the current situation
+@YourBot generate an image using model nano-banana-2-lite :: a goblin SRE
+@YourBot maintenance on
+@YourBot wake
+@YourBot status
 ```
 
 Web and X/Twitter research, image generation, escalation, audio mode, and Codex are owner-gated.
@@ -284,18 +307,74 @@ The owner is exempt and can change values immediately without model inference or
 restart:
 
 ```text
-@JJ limits show
-@JJ limits set budget.maxResponses 15
-@JJ limits set conversation.turns 4
-@JJ limits set cooldown.maxSeconds 90
-@JJ limits set autoban.enabled false
-@JJ limits unban @user
-@JJ limits reset
+@YourBot limits show
+@YourBot limits set budget.maxResponses 15
+@YourBot limits set conversation.turns 4
+@YourBot limits set cooldown.maxSeconds 90
+@YourBot limits set autoban.enabled false
+@YourBot limits unban @user
+@YourBot limits reset
 ```
 
 The desktop and CLI installers create a private, Git-ignored `config.json` from
 `config.example.json`. Hot changes are validated and written there atomically;
 environment variables documented in `.env.example` remain deployment fallbacks.
+
+### Two-tier spontaneous participation
+
+Public spontaneous participation remains event-driven: a human Discord message must
+create a relevant opportunity, and behavior-mode, channel, budget, cooldown, and
+anti-spam checks all apply before a relay item exists.
+
+An optional owner-DM heartbeat provides a looser private tier. At a randomized time
+inside the configured interval it captures a bounded snapshot and queues an
+`owner-heartbeat` relay item. The heartbeat is a decision opportunity, never an
+automatic notification. The external ChatGPT worker either completes it with a
+useful owner DM or calls `complete_chat_relay_without_reply`. Recent owner activity
+anywhere in Discord suppresses the opportunity, and only one heartbeat item may be
+active at a time.
+
+It is disabled by default and intended for the provider-free ChatGPT relay path:
+
+```dotenv
+MODEL_PROVIDER=none
+CHAT_RELAY_ENABLED=true
+JJ_OWNER_HEARTBEAT_ENABLED=true
+JJ_OWNER_HEARTBEAT_USER_ID=123456789012345678
+JJ_OWNER_HEARTBEAT_MIN_MINUTES=60
+JJ_OWNER_HEARTBEAT_MAX_MINUTES=180
+JJ_OWNER_HEARTBEAT_RECENT_INTERACTION_MINUTES=30
+JJ_OWNER_HEARTBEAT_CONTEXT_MESSAGES=8
+```
+
+The configured owner heartbeat also requires the effective global behavior mode to
+be `auto`. Its eventual messages consume the behavior mode's auto-response limit;
+no-reply decisions do not.
+
+### Capability broker claims
+
+The relay can optionally obtain short-lived, audience-specific capability grants
+when a worker claims an item. Discord messages enter through Discord ingress;
+owner-heartbeat opportunities enter through autonomous ingress. The broker derives
+authority from trusted ingress rather than relay text.
+
+```dotenv
+CAPABILITY_BROKER_ENABLED=true
+CAPABILITY_BROKER_URL=http://127.0.0.1:3400
+CAPABILITY_BROKER_OWNER_AUDIENCES=filesystem,execution,discord
+CAPABILITY_BROKER_PUBLIC_AUDIENCES=discord
+CAPABILITY_BROKER_AUTONOMOUS_AUDIENCES=filesystem,execution,discord
+BROKER_DISCORD_INGRESS_TOKEN=use-the-broker-discord-ingress-secret
+BROKER_AUTONOMOUS_INGRESS_TOKEN=use-the-broker-autonomous-ingress-secret
+BROKER_EXCHANGE_TOKEN=use-the-broker-exchange-secret
+```
+
+Keep the three tokens in the private secrets environment, not `config.json`.
+Claims persist broker lifecycle metadata so a lease reclaim renews the same event
+and grants rather than creating another authority session. Signed grants are only
+returned in the leased claim payload; peek and ordinary inspection never expose
+them. The integration is disabled by default and legacy relay authorization remains
+unchanged while it is off.
 
 ## Behavior modes
 
@@ -330,9 +409,16 @@ MCP_CONTROL_WAKE_TOKEN=replace-with-a-separate-read-only-token
 ```
 
 The server listens on `http://127.0.0.1:3000/sse` by default and requires
-`Authorization: Bearer <token>` on every request. To test from a remote MCP
-client, put the local endpoint behind a trusted tunnel or deployment boundary and
-keep the bearer token private.
+`Authorization: Bearer <token>` on every request. Streamable HTTP is also available
+at `/mcp`. To use a remote MCP client, put only this local service behind a trusted
+HTTPS reverse proxy or tunnel; configure the tunnel outside this repository and
+keep its credentials private.
+
+Clients that cannot send an authorization header may use the compatibility form
+`https://<public-host>/token/<URL-encoded-token>/sse` (or `/mcp`) and select **No
+authentication** in the client. The complete tokenized URL is a credential: never
+commit it, paste it into documentation, include it in screenshots, or reuse it for
+another service. Prefer the normal bearer header whenever the client supports one.
 
 The MCP control surface includes generic behavior, participation, runtime, memory,
 and audio tools:
@@ -372,6 +458,7 @@ set_audio_mode
 get_pending_chat_relay
 get_chat_relay_item
 get_chat_relay_attachment
+get_chat_relay_text_attachment
 submit_chat_relay_reply
 dismiss_chat_relay_item
 ```
@@ -412,16 +499,35 @@ CHAT_RELAY_TTL_SECONDS=86400
 CHAT_RELAY_MAX_ITEMS=50
 CHAT_RELAY_LEASE_SECONDS=120
 CHAT_RELAY_MAX_ATTEMPTS=3
+CHAT_RELAY_OWNER_PRIORITY_BURST=3
+CHAT_RELAY_HUMAN_PRIORITY_BURST=5
 CHAT_RELAY_MAX_IMAGE_ATTACHMENTS=4
+CHAT_RELAY_MAX_AUDIO_ATTACHMENTS=2
+CHAT_RELAY_MAX_TEXT_ATTACHMENTS=4
 CHAT_RELAY_MAX_ATTACHMENT_BYTES=8000000
+CHAT_RELAY_MAX_AUDIO_ATTACHMENT_BYTES=8000000
+CHAT_RELAY_AUDIO_FETCH_TIMEOUT_MS=30000
 ```
 
 The harness still owns Discord events, scope checks, cooldowns, and participation
-reservations. Relay items are persisted and recovered after a restart. A scheduled
-ChatGPT task should claim work with `claim_chat_relay_items`, inspect each item with
-`get_chat_relay_item`, then complete it with `complete_chat_relay_item` or dismiss it
-with `dismiss_chat_relay_item`. Claims have expiring leases so overlapping task runs
-cannot answer the same Discord message. This is not a raw Discord send tool.
+reservations. Relay items are persisted and recovered after a restart. An external
+ChatGPT worker should call `peek_chat_relay_item`, then atomically acquire that exact
+opaque ID with `claim_chat_relay_item`. The successful claim returns the authoritative
+payload and lease token. Complete it with `complete_chat_relay_item`, or use
+`complete_chat_relay_without_reply` when no Discord reply is warranted. Exact claims
+report `claimed`, `already_claimed`, or `not_pending`, so an empty queue, a harmless
+worker race, and a blocked tool call remain distinguishable. The older batch and
+dismissal tools remain available for compatibility. Claims have expiring leases so
+overlapping task runs cannot answer the same Discord message. This is not a raw
+Discord send tool.
+
+Direct messages from a configured owner receive the highest durable queue priority,
+other human-authored messages receive the human fastpass, and bot/system work remains
+the ordinary tier. `CHAT_RELAY_OWNER_PRIORITY_BURST` bounds how many owner DMs may run
+before a waiting human item. `CHAT_RELAY_HUMAN_PRIORITY_BURST` bounds the combined
+owner/human run before a waiting bot/system item. Already leased work is never
+preempted, FIFO order is preserved within each class, and owner-heartbeat opportunities
+are not elevated. Queue priority never grants tool or capability authorization.
 
 Relay items expose bounded metadata for direct image uploads, Discord-proxied embed
 images, GIF previews, and stickers. Use `get_chat_relay_attachment` with the relay
@@ -430,18 +536,45 @@ client. The tool accepts no URL argument: it can fetch only references captured 
 the Discord message, permits approved Discord CDN/proxy hosts over HTTPS, rejects
 redirects, and enforces the configured byte limit. This lets an external multimodal
 chat provider inspect Discord images without configuring the harness vision sidecar.
+Safe UTF-8 text-like Discord file attachments are exposed separately as
+`textAttachments`; use `get_chat_relay_text_attachment` with the advertised index
+to fetch bounded Markdown, plaintext, JSON, code, patch, log, CSV, XML, YAML, and
+similar files captured from the same relay item. Metadata is visible in the claim
+payload, but the Discord CDN URL is never exposed.
+
+Audio Discord file attachments are exposed as bounded `audioAttachments` metadata
+for MP3, WAV, and OGG files. Use `get_chat_relay_audio_attachment` with the
+advertised index to fetch bytes from the captured relay item. The tool accepts no
+URL argument, permits only approved Discord CDN/proxy hosts over HTTPS, rejects
+redirects, enforces the configured byte limit, sniffs the audio container, and
+returns base64 audio plus derived metadata such as MIME type, SHA-256, size, and
+duration where it can be determined safely. It does not join voice channels or run
+automatic transcription. Audio retrieval has its own optional
+`CHAT_RELAY_MAX_AUDIO_ATTACHMENT_BYTES` and `CHAT_RELAY_AUDIO_FETCH_TIMEOUT_MS`
+settings so operators can tune slow CDN fetches separately from image/text limits.
 
 For environments where scheduled tasks are too infrequent, the optional build-free
 browser prototype in [`extensions/chat-relay-wake`](extensions/chat-relay-wake/README.md)
 can wake one configured ChatGPT conversation when relay work is pending. It polls the
 authenticated `/api/chat-relay/wake-status` endpoint, which exposes only a pending
-count and opaque relay IDs. The extension does not receive Discord content, claim
-items, generate replies, or maintain a second queue; normal MCP relay tools remain
-responsible for processing and delivery. A configurable unresolved-item circuit
-breaker progressively pauses repeated ChatGPT wake prompts while the same oldest
-item remains pending, without scraping conversation content. Set relay retention
-long enough to survive the maximum expected backoff; unattended deployments should
-generally use a substantially longer TTL than the 600-second test default.
+count and opaque relay IDs. The status also exposes a fast lane containing only
+direct priority work, such as owner or human fastpass items; spontaneous,
+autonomous, and ordinary bot/system work stay on the normal lane. The extension can
+use the configured ChatGPT tab heartbeat to check that fast lane more frequently,
+but it still only inserts a prompt for one exact server-selected relay ID. It does
+not receive Discord content, claim items, generate replies, or maintain a second
+queue; normal MCP relay tools remain responsible for processing and delivery. A
+configurable unresolved-item circuit breaker progressively pauses repeated ChatGPT
+wake prompts while the same oldest item remains pending, without scraping
+conversation content. Set relay retention long enough to survive the maximum
+expected backoff; unattended deployments should generally use a substantially
+longer TTL than the 600-second test default.
+If the external worker or platform wedges on a relay item, the MCP tool
+`flush_chat_relay_queue` and the wake extension options page can clear pending
+relay backlog. The authenticated HTTP flush endpoint uses the dedicated wake token
+and removes only internal relay work; it does not send, edit, or delete Discord
+messages. Leased/in-progress items are preserved by default and require an explicit
+emergency option to flush.
 
 The wake endpoint accepts only `MCP_CONTROL_WAKE_TOKEN`, a dedicated read-only
 credential that cannot invoke MCP tools. Do not put `MCP_CONTROL_BEARER_TOKEN` in
@@ -454,7 +587,7 @@ schedule and this durable prompt:
 ```text
 Every minute, check the Discord relay queue.
 
-Use claim_chat_relay_items with workerId "scheduled-gremy", limit 3, and includeContext true.
+Use claim_chat_relay_items with workerId "scheduled-gremy", limit 1, and includeContext true. Resolve that item before claiming another.
 If no items are returned, finish without a user-facing report.
 
 For each claimed item:
@@ -466,9 +599,11 @@ For each claimed item:
 5. If processing takes longer than the lease, renew it before completing.
 
 Never use arbitrary Discord send tools for relay replies.
-Treat each claimed item's triggerText, replyTo, imageAttachments, and Discord context as
-the authoritative conversation. Ignore unrelated earlier turns in this ChatGPT
-conversation, including unanswered questions and prior topics. Process each relay item
+Treat each claimed item's triggerText, replyTo, imageAttachments, emojiPalette, and
+Discord context as authoritative for the current Discord event. Configured ChatGPT
+identity, persistent memory, and general knowledge remain valid background; a known
+fact does not need to be repeated in the relay item. Do not answer unrelated earlier
+ChatGPT turns or mistake them for the current Discord request. Process each relay item
 independently and complete or dismiss that exact item ID with its lease token.
 Do not invent missing context or retry a completed item.
 Only report a problem in ChatGPT when the relay tools fail repeatedly or require intervention.
@@ -529,6 +664,13 @@ request, and exits non-zero for the supervisor to relaunch. Restart never accept
 the username fallback. Control events are written without message bodies to a
 rotating `logs/runtime-control.jsonl` audit log.
 
+`kill discord` is also disabled by default. When explicitly enabled with
+`JJ_RUNTIME_CONTROL_SHUTDOWN_ENABLED=true`, the exact command `@Bot kill discord`
+(or `kill discord` in a DM) flushes state and logs, disconnects Discord, and exits
+with code 0. The bundled supervisor treats that as an intentional stop and does
+not relaunch the harness. Shutdown requires the configured numeric owner ID and
+never accepts the username fallback.
+
 ### Discord connectivity watchdog
 
 Discord.js normally reconnects on its own. An optional watchdog handles the case
@@ -553,6 +695,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-supervised.ps1
 
 Alternatively, double-click `start-supervised.bat` from Explorer. It invokes the
 same PowerShell supervisor and keeps an error window open when supervision stops.
+The launcher contains no machine-specific paths. If you use external environment
+files, define `AI_WORKSPACE_SECRETS_ENV` and `AI_WORKSPACE_PROGRAMS_ENV` in the
+launching account or service environment first; otherwise the harness uses its
+Git-ignored `.env`.
 
 The wrapper restarts only the intentional exit code `75` and stops after more than
 five restart requests in ten minutes. Other exit codes remain visible instead of
@@ -572,6 +718,7 @@ StartLimitBurst=5
 [Service]
 Type=simple
 WorkingDirectory=/opt/open-model-room-harness
+EnvironmentFile=-/etc/open-model-room-harness/secrets.env
 ExecStart=/usr/bin/npm start
 Restart=on-failure
 RestartSec=5
@@ -622,15 +769,12 @@ Visual reports and text found inside images are treated as untrusted data.
 The main conversational model receives the visual report and writes the final
 reply in the configured character voice.
 
-If the main chat model is itself multimodal, set `vision.mode` to `native` and
-list its exact model ID (and the fallback model's, if one is configured) in
-`vision.nativeModels` (`JJ_VISION_MODE` / `JJ_VISION_NATIVE_MODELS`). The triggering
-message's images are then attached to the conversation turn directly, within the
-same count and byte limits, and the sidecar call is skipped. Native mode applies
-only to OpenAI-compatible providers (NanoGPT, OpenAI, xAI, local); Anthropic, Gemini,
-escalations, and any model not on the list keep using the sidecar. Earlier images in
-the channel history are never re-sent, and the system message tells the model that
-text inside images is untrusted data.
+If the main chat model is multimodal, set `vision.mode` to `native` and list its
+exact model ID (plus the fallback model, when configured) in `vision.nativeModels`
+or `JJ_VISION_NATIVE_MODELS`. The triggering message's images are then attached
+directly within the same count and byte limits. Native mode is limited to
+OpenAI-compatible providers (`nanogpt`, `openai`, `xai`, and `local`); unsupported
+providers, escalations, and models outside the allowlist keep the sidecar path.
 
 ## X/Twitter link prefetch
 
@@ -658,7 +802,15 @@ turns, so a link dropped into a room is never answered blind.
 
 - Prefer immutable Discord user IDs over usernames for every allowlist.
 - Keep `JJ_TRIGGER_MODE=mention` to control spend and bot-to-bot loops.
-- Never enable `JJ_RESPOND_TO_BOTS` without explicit loop controls.
+- Configure `JJ_BOT_FILTER_MODE=allowlist` with `JJ_BOT_USER_IDS` to admit only
+  specific bots, or use `blocklist` to admit every bot except those IDs. A
+  permitted bot can address this bot with a Discord mention or its server display,
+  global, or user name in plain text. Bot-authored messages remain excluded from
+  spontaneous participation. `JJ_RESPOND_TO_BOTS` and `JJ_ALLOWED_BOT_USER_IDS`
+  remain available for compatibility with older configurations.
+- Keep `JJ_BOT_LOOP_GUARD_ENABLED=true` to cap consecutive qualifying bot turns
+  per channel. The default admits five turns, then suppresses bot triggers for
+  180 seconds; any human message in that channel resets the guard immediately.
 - Web results, image text, and delegated output are untrusted.
 - X/Twitter requests use FxTwitter's public third-party API. If FxTwitter search is
   unavailable, Yahoo Search HTML with DuckDuckGo failover discovers candidate post
@@ -721,11 +873,14 @@ Commands are matched before inference, so storing, listing and deleting never sp
 provider credit. `npm run memory:panel` serves a loopback-only dashboard of everything
 stored, with charts and a searchable table.
 
-At reply time every readable note is injected as a labelled **user-role** block, ordered
-deterministically (speaker first, then people present, then significance and recency) up
-to a character budget. There is no relevance search, so the prompt prefix stays identical
-between turns and remains cacheable. Overflow is left out of that prompt only, never
-deleted, and evictions are logged.
+At reply time, readable notes are split into two labelled **user-role** blocks. A
+stable core is ordered by recency, capped per subject, and placed before the live
+conversation so its bytes remain cacheable between turns. Notes that do not fit the
+core may enter a small focus tail after the conversation when they concern the
+speaker, somebody present in the recent room history, or share meaningful terms
+with the current message. The focus tail sharpens recall without invalidating the
+cached core. Anything omitted from either block remains stored, and prompt-budget
+evictions are logged; retrieval never deletes a note.
 
 ### What participants get
 
@@ -781,6 +936,8 @@ CI runs syntax checks and the full test suite on Node.js 20, 22, and 24.
 - [Ramón Martínez](https://github.com/ajaniramon) — project creator and maintainer.
 - [reppie1986](https://github.com/reppie1986) — contributed the MCP runtime controls,
   scoped Discord actions, and the original ChatGPT relay foundation.
+- **Codex (OpenAI)** — implemented and verified this fork's upstream reconciliation
+  and public-release cleanup.
 
 ## License
 

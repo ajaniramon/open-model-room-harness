@@ -37,6 +37,9 @@ export function parseRuntimeControlCommand(content) {
   if (/^(?:restart runtime|runtime restart|reinicia(?:r)? (?:el )?runtime)$/.test(command)) {
     return { action: "restart" };
   }
+  if (/^(?:kill discord|stop discord|shutdown discord)$/.test(command)) {
+    return { action: "shutdown" };
+  }
   if (/^(?:status|runtime status|maintenance status|estado|estado (?:del )?runtime)$/.test(command)) {
     return { action: "status" };
   }
@@ -46,7 +49,9 @@ export function parseRuntimeControlCommand(content) {
 export function isRuntimeControlAuthorized(author, config, action) {
   const id = String(author?.id || "");
   if (config.ownerUserIds.has(id)) return true;
-  if (action === "restart" || !config.runtimeControlAllowUsernameFallback) return false;
+  if (["restart", "shutdown"].includes(action) || !config.runtimeControlAllowUsernameFallback) {
+    return false;
+  }
   const username = String(author?.username || "").toLowerCase();
   return config.ownerUsernames.has(username);
 }
@@ -89,6 +94,7 @@ export class RuntimeControl {
     behaviorModeController = null,
     auditLogger = null,
     restartEnabled = false,
+    shutdownEnabled = false,
     now = Date.now,
     startedAt = Date.now(),
   }) {
@@ -96,6 +102,7 @@ export class RuntimeControl {
     this.behaviorModeController = behaviorModeController;
     this.auditLogger = auditLogger;
     this.restartEnabled = restartEnabled;
+    this.shutdownEnabled = shutdownEnabled;
     this.now = now;
     this.startedAt = startedAt;
     this.updatedAt = null;
@@ -213,8 +220,9 @@ export class RuntimeControl {
       await this.#audit("runtime_status_requested", context, {});
       const state = this.mode;
       const restart = this.restartEnabled ? "enabled" : "disabled";
+      const shutdown = this.shutdownEnabled ? "enabled" : "disabled";
       return {
-        response: `[runtime status] State: ${state}. Model: ${context.model || "configured provider"}. Uptime: ${formatUptime(this.now() - this.startedAt)}. Supervised restart: ${restart}.`,
+        response: `[runtime status] State: ${state}. Model: ${context.model || "configured provider"}. Uptime: ${formatUptime(this.now() - this.startedAt)}. Supervised restart: ${restart}. Owner shutdown: ${shutdown}.`,
       };
     }
     if (command.action === "restart") {
@@ -229,6 +237,20 @@ export class RuntimeControl {
       return {
         response: "[runtime restart scheduled] State and logs are flushed. The service supervisor should reconnect shortly.",
         restart: true,
+      };
+    }
+    if (command.action === "shutdown") {
+      if (!this.shutdownEnabled) {
+        await this.#audit("runtime_shutdown_denied", context, { reason: "disabled" });
+        return {
+          response: "[runtime shutdown disabled] Enable owner shutdown in config before using this command.",
+        };
+      }
+      await this.#audit("runtime_shutdown_requested", context, {});
+      await this.auditLogger?.close();
+      return {
+        response: "[runtime shutdown scheduled] State and logs are flushed. The supervised process will stop without restarting.",
+        shutdown: true,
       };
     }
     throw new Error(`Unsupported runtime control action: ${command.action}`);

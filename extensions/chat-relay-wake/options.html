@@ -19,6 +19,11 @@
           <input id="enabled" name="enabled" type="checkbox">
         </label>
 
+        <label class="toggle-row">
+          <span>Wake only for configured owner DMs</span>
+          <input id="ownerOnly" name="ownerOnly" type="checkbox">
+        </label>
+
         <label>
           Harness status URL
           <input id="statusUrl" name="statusUrl" type="url" required spellcheck="false">
@@ -30,8 +35,58 @@
         </label>
 
         <label>
-          ChatGPT task URL
-          <input id="targetUrl" name="targetUrl" type="url" required placeholder="https://chatgpt.com/g/g-.../c/..." spellcheck="false">
+          Discord relay ChatGPT URL
+          <input id="relayTargetUrl" name="relayTargetUrl" type="url" required placeholder="https://chatgpt.com/g/g-.../c/..." spellcheck="false">
+        </label>
+
+        <label>
+          Fastlane ChatGPT URL
+          <input id="fastLaneTargetUrl" name="fastLaneTargetUrl" type="url" placeholder="https://chatgpt.com/g/g-.../c/..." spellcheck="false">
+        </label>
+
+        <label>
+          Autonomous ChatGPT URL
+          <input id="autonomousTargetUrl" name="autonomousTargetUrl" type="url" placeholder="https://chatgpt.com/g/g-.../c/..." spellcheck="false">
+        </label>
+
+        <label class="toggle-row">
+          <span>Attest manual owner messages</span>
+          <input id="directOwnerEnabled" name="directOwnerEnabled" type="checkbox">
+        </label>
+
+        <label>
+          Owner ChatGPT URL
+          <input id="ownerTargetUrl" name="ownerTargetUrl" type="url" placeholder="https://chatgpt.com/g/g-.../c/..." spellcheck="false">
+        </label>
+
+        <label>
+          Capability broker URL
+          <input id="brokerUrl" name="brokerUrl" type="url" placeholder="http://127.0.0.1:3400" spellcheck="false">
+        </label>
+
+        <label>
+          Direct ChatGPT ingress token
+          <input id="directChatgptToken" name="directChatgptToken" type="password" autocomplete="off" spellcheck="false">
+        </label>
+
+        <label>
+          Owner capability audiences
+          <input id="directOwnerAudiences" name="directOwnerAudiences" type="text" spellcheck="false">
+        </label>
+
+        <label class="toggle-row">
+          <span>Enable durable orchestration delivery</span>
+          <input id="orchestrationDeliveryEnabled" name="orchestrationDeliveryEnabled" type="checkbox">
+        </label>
+
+        <label>
+          Orchestration delivery URL
+          <input id="orchestrationDeliveryUrl" name="orchestrationDeliveryUrl" type="url" placeholder="https://orchestrator.example" spellcheck="false">
+        </label>
+
+        <label>
+          Orchestration delivery token
+          <input id="orchestrationDeliveryToken" name="orchestrationDeliveryToken" type="password" autocomplete="off" spellcheck="false">
         </label>
 
         <div class="two-columns">
@@ -39,6 +94,18 @@
             Poll interval (minutes)
             <input id="pollMinutes" name="pollMinutes" type="number" min="0.5" max="60" step="0.5">
           </label>
+          <label>
+            Fast lane interval (seconds)
+            <input id="fastLanePollSeconds" name="fastLanePollSeconds" type="number" min="5" max="300" step="1">
+          </label>
+        </div>
+
+        <label class="toggle-row">
+          <span>Use fast lane for the configured Discord guild/channel</span>
+          <input id="fastLaneEnabled" name="fastLaneEnabled" type="checkbox">
+        </label>
+
+        <div class="two-columns">
           <label>
             Cooldown (seconds)
             <input id="cooldownSeconds" name="cooldownSeconds" type="number" min="30" max="3600" step="1">
@@ -54,6 +121,14 @@
           Wake prompt
           <textarea id="wakePrompt" name="wakePrompt" rows="3"></textarea>
         </label>
+        <label>
+          Spontaneous wake prompt
+          <textarea id="spontaneousWakePrompt" name="spontaneousWakePrompt" rows="3"></textarea>
+        </label>
+        <label>
+          Autonomous wake prompt
+          <textarea id="autonomousWakePrompt" name="autonomousWakePrompt" rows="3"></textarea>
+        </label>
 
         <label class="toggle-row">
           <span>Submit wake prompt automatically</span>
@@ -68,6 +143,15 @@
         <div class="actions">
           <button type="submit">Save</button>
           <button id="test" type="button" class="secondary">Save and force check</button>
+        </div>
+
+        <label class="toggle-row">
+          <span>Flush leased/in-progress relay items too</span>
+          <input id="flushLeased" name="flushLeased" type="checkbox">
+        </label>
+
+        <div class="actions">
+          <button id="flushQueue" type="button" class="danger">Flush relay queue</button>
         </div>
         <output id="message" aria-live="polite"></output>
       </form>

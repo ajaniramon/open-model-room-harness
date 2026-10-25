@@ -124,7 +124,10 @@ flowchart LR
 3. **Wake detection.** The extension polls the wake-status endpoint. The endpoint
    returns only counts and opaque relay IDs. Chrome alarms provide the normal
    trigger; a heartbeat from the configured ChatGPT tab supplements delayed
-   Manifest V3 alarms.
+   Manifest V3 alarms. A separate fast-lane view exposes only direct priority
+   work so urgent owner/human relay items can be noticed on the heartbeat cadence
+   while spontaneous, autonomous, and ordinary bot/system work stay on the normal
+   lane.
 4. **ChatGPT activation.** The extension inserts a fixed worker prompt into one
    configured ChatGPT conversation. A scheduled ChatGPT task can be used as an
    alternative wake source.

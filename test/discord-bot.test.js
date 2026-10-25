@@ -2,15 +2,20 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ChannelType } from "discord.js";
 import {
+  allowsBotAuthor,
   addressesOtherRecipient,
   allowsXPostPrefetch,
   buildMessageHeader,
+  botMentionLabel,
+  cleanContent,
   isBlockedAuthor,
   isAudioModeAuthorized,
   isCodexAuthorized,
   isEscalationAuthorized,
   isImageGenerationAuthorized,
+  isAllowedDiscordMessageScope,
   isWebAuthorized,
+  mentionsBotByName,
   compactCodexHandoff,
   compileImagePrompt,
   buildContext,
@@ -21,6 +26,7 @@ import {
   parseEscalationCommand,
   resolveResponseTrigger,
   parseImageGenerationCommand,
+  relayPriority,
   parseCodexDelegation,
   requestsWebTools,
   resolveEscalationModel,
@@ -28,8 +34,74 @@ import {
   splitDiscordMessage,
 } from "../src/discord-bot.js";
 
+test("elevates only direct messages from a configured owner", () => {
+  assert.equal(relayPriority({ guildId: null, author: { bot: false } }, true), 200);
+  assert.equal(relayPriority({ guildId: "guild", author: { bot: false } }, true), 100);
+  assert.equal(relayPriority({ guildId: null, author: { bot: false } }, false), 100);
+  assert.equal(relayPriority({ guildId: "guild", author: { bot: true } }, false), 0);
+});
+
+test("supports allowlist and blocklist bot admission modes", () => {
+  const trustedBot = { id: "trusted", bot: true };
+  const otherBot = { id: "other", bot: true };
+  const human = { id: "human", bot: false };
+
+  const allowlist = { botFilterMode: "allowlist", botUserIds: new Set(["trusted"]) };
+  assert.equal(allowsBotAuthor(trustedBot, allowlist), true);
+  assert.equal(allowsBotAuthor(otherBot, allowlist), false);
+  assert.equal(allowsBotAuthor(human, allowlist), true);
+
+  const blocklist = { botFilterMode: "blocklist", botUserIds: new Set(["trusted"]) };
+  assert.equal(allowsBotAuthor(trustedBot, blocklist), false);
+  assert.equal(allowsBotAuthor(otherBot, blocklist), true);
+  assert.equal(allowsBotAuthor(human, blocklist), true);
+});
+
+test("preserves legacy bot admission configuration", () => {
+  const listedBot = { id: "listed", bot: true };
+  const otherBot = { id: "other", bot: true };
+
+  assert.equal(allowsBotAuthor(listedBot, {
+    respondToBots: false,
+    allowedBotUserIds: new Set(["listed"]),
+  }), true);
+  assert.equal(allowsBotAuthor(otherBot, {
+    respondToBots: false,
+    allowedBotUserIds: new Set(["listed"]),
+  }), false);
+  assert.equal(allowsBotAuthor(otherBot, {
+    respondToBots: true,
+    allowedBotUserIds: new Set(),
+  }), true);
+});
+
 test("keeps short Discord messages intact", () => {
   assert.deepEqual(splitDiscordMessage("hola JJ"), ["hola JJ"]);
+});
+
+test("renders bot mentions with the connected Discord identity instead of a hardcoded alias", () => {
+  const botUser = { id: "bot-123", username: "gremy-account", globalName: "Gremy Global" };
+  const message = {
+    id: "mention-message",
+    content: "<@bot-123> glad to finally have you join us!!!",
+    author: { id: "person", username: "host" },
+    attachments: new Map(),
+    guild: { members: { me: { displayName: "Gremy" } } },
+  };
+  assert.equal(botMentionLabel(message, botUser), "@Gremy");
+  assert.equal(cleanContent(message, botUser), "@Gremy glad to finally have you join us!!!");
+});
+
+test("recognizes the connected bot's Discord names as bounded plain-text mentions", () => {
+  const botUser = { id: "gremy", username: "gremy-account", globalName: "Gremy Global" };
+  const message = {
+    content: "Gremy, are you awake?",
+    guild: { members: { me: { displayName: "Gremy" } } },
+  };
+
+  assert.equal(mentionsBotByName(message, botUser), true);
+  message.content = "The gremyish configuration is unrelated";
+  assert.equal(mentionsBotByName(message, botUser), false);
 });
 
 test("splits long responses below the configured limit without losing words", () => {
@@ -50,6 +122,7 @@ test("conversation policy opens on mention, follows the same-user window, then g
   const config = {
     blockedUsernames: new Set(),
     respondToBots: false,
+    allowedBotUserIds: new Set(),
     allowedChannelIds: new Set(),
     triggerMode: "all",
   };
@@ -78,6 +151,129 @@ test("conversation policy opens on mention, follows the same-user window, then g
   assert.deepEqual(await resolveResponseTrigger(message, client, config, controller), {
     directResponse: true,
     explicitMention: true,
+    continuation: false,
+  });
+});
+
+test("server allowlist ignores guild messages outside the configured lock while preserving DMs", async () => {
+  const config = {
+    blockedUsernames: new Set(),
+    respondToBots: false,
+    allowedBotUserIds: new Set(),
+    allowedGuildIds: new Set(["guild-a"]),
+    allowedChannelIds: new Set(),
+    triggerMode: "mention",
+  };
+  const client = { user: { id: "bot" } };
+  const message = {
+    author: { id: "person", username: "person", bot: false },
+    content: "<@bot> emergency?",
+    channel: { type: 0 },
+    guildId: "guild-b",
+    channelId: "channel",
+    mentions: { has: () => true },
+  };
+
+  assert.deepEqual(await resolveResponseTrigger(message, client, config), {
+    directResponse: false,
+    explicitMention: false,
+    continuation: false,
+  });
+
+  message.guildId = "guild-a";
+  assert.deepEqual(await resolveResponseTrigger(message, client, config), {
+    directResponse: true,
+    explicitMention: true,
+    continuation: false,
+  });
+
+  message.guildId = null;
+  message.channel = { type: ChannelType.DM };
+  assert.deepEqual(await resolveResponseTrigger(message, client, config), {
+    directResponse: true,
+    explicitMention: false,
+    continuation: false,
+  });
+});
+
+test("channel allowlist permits direct mentions only inside configured channels", async () => {
+  const config = {
+    blockedUsernames: new Set(),
+    respondToBots: false,
+    allowedBotUserIds: new Set(),
+    allowedGuildIds: new Set(),
+    allowedChannelIds: new Set(["channel-a"]),
+    triggerMode: "mention",
+  };
+  const client = { user: { id: "bot" } };
+  const message = {
+    author: { id: "person", username: "person", bot: false },
+    content: "<@bot> focus check",
+    channel: { type: 0 },
+    guildId: "guild-a",
+    channelId: "channel-b",
+    mentions: { has: () => true },
+  };
+
+  assert.equal(isAllowedDiscordMessageScope(message, config), false);
+  assert.deepEqual(await resolveResponseTrigger(message, client, config), {
+    directResponse: false,
+    explicitMention: false,
+    continuation: false,
+  });
+
+  message.channelId = "channel-a";
+  assert.equal(isAllowedDiscordMessageScope(message, config), true);
+  assert.deepEqual(await resolveResponseTrigger(message, client, config), {
+    directResponse: true,
+    explicitMention: true,
+    continuation: false,
+  });
+});
+
+test("allows only configured bot users through the direct-response gate", async () => {
+  const config = {
+    blockedUsernames: new Set(),
+    respondToBots: false,
+    allowedBotUserIds: new Set(["trusted-bot"]),
+    allowedChannelIds: new Set(),
+    triggerMode: "mention",
+  };
+  const client = { user: { id: "gremy" } };
+  const message = {
+    author: { id: "untrusted-bot", username: "untrusted", bot: true },
+    content: "Gremy, are you awake?",
+    channel: { type: 0 },
+    guildId: "guild",
+    channelId: "channel",
+    guild: { members: { me: { displayName: "Gremy" } } },
+    mentions: { has: () => true },
+  };
+
+  assert.deepEqual(await resolveResponseTrigger(message, client, config), {
+    directResponse: false,
+    explicitMention: false,
+    continuation: false,
+  });
+
+  message.author = { id: "trusted-bot", username: "trusted", bot: true };
+  assert.deepEqual(await resolveResponseTrigger(message, client, config), {
+    directResponse: true,
+    explicitMention: true,
+    continuation: false,
+  });
+
+  message.mentions.has = () => false;
+  assert.deepEqual(await resolveResponseTrigger(message, client, config), {
+    directResponse: true,
+    explicitMention: true,
+    continuation: false,
+  });
+
+  message.content = "This message does not address the assistant";
+  assert.deepEqual(await resolveResponseTrigger(message, client, config), {
+    directResponse: false,
+    explicitMention: false,
     continuation: false,
   });
 });
@@ -188,6 +384,63 @@ test("formats a Discord-only emoji palette without treating it as memory", async
   );
   assert.match(context[0].content, /Application Discord metadata/);
   assert.match(context[0].content, /<:spark:123456789012345678>/);
+});
+
+test("anchors context before the trigger and appends that trigger exactly once", async () => {
+  const trigger = {
+    id: "m2",
+    content: "@bot second question",
+    guildId: "g1",
+    channelId: "c1",
+    createdTimestamp: 2_000,
+    author: { id: "u2", username: "bob", bot: false },
+    member: null,
+    attachments: new Map(),
+  };
+  const older = {
+    ...trigger,
+    id: "m1",
+    content: "first question",
+    createdTimestamp: 1_000,
+    author: { id: "u1", username: "alice", bot: false },
+  };
+  const newerBotReply = {
+    ...trigger,
+    id: "m3",
+    content: "reply to first question",
+    createdTimestamp: 3_000,
+    author: { id: "bot", username: "bot", bot: true },
+  };
+  let fetchOptions;
+  trigger.channel = {
+    messages: {
+      // Deliberately ignore `before`; buildContext must still filter defensively.
+      fetch: async (options) => {
+        fetchOptions = options;
+        return new Map([[older.id, older], [trigger.id, trigger], [newerBotReply.id, newerBotReply]]);
+      },
+    },
+  };
+
+  const context = await buildContext(
+    trigger,
+    { user: { id: "bot" } },
+    {
+      blockedUsernames: new Set(),
+      contextMessages: 5,
+      contextTimestamps: false,
+      timeZone: "UTC",
+      visionModel: "vision",
+      discordEmojiPalette: [],
+    },
+    "System.",
+  );
+
+  assert.deepEqual(fetchOptions, { limit: 4, before: "m2" });
+  assert.match(context.at(-1).content, /second question/);
+  assert.equal(context.at(-1).role, "user");
+  assert.equal(context.filter((entry) => String(entry.content).includes("second question")).length, 1);
+  assert.ok(!context.some((entry) => String(entry.content).includes("reply to first question")));
 });
 
 test("marks bots and omits timestamps when the feature is disabled", () => {
@@ -467,7 +720,7 @@ test("authorizes image generation only for configured Discord identities", () =>
   assert.equal(isImageGenerationAuthorized({ id: "999", username: "goblin" }, config), false);
 });
 
-test("accepts concrete compiled image prompts and rejects JJ roleplay", () => {
+test("accepts concrete compiled image prompts and rejects assistant roleplay", () => {
   assert.equal(
     normalizeCompiledImagePrompt(
       '**Image prompt:** "A chaotic Discord engineering room filled with glowing terminals, a red-haired team lead, and goblin developers debugging an audio bot."',
@@ -476,7 +729,7 @@ test("accepts concrete compiled image prompts and rejects JJ roleplay", () => {
   );
   assert.equal(
     normalizeCompiledImagePrompt(
-      "JJ cracks her knuckles and grins.\n\nOh, you want the current situation immortalized? Here we go:",
+      "The assistant cracks their knuckles and grins.\n\nOh, you want the current situation immortalized? Here we go:",
     ),
     null,
   );
@@ -485,7 +738,7 @@ test("accepts concrete compiled image prompts and rejects JJ roleplay", () => {
 
 test("compiles every image brief through the configured prompt model and retries junk", async () => {
   const replies = [
-    "JJ rolls over dramatically. Here we go:",
+    "Assistant rolls over dramatically. Here we go:",
     "A cinematic goblin engineer repairing a glowing production server in a chaotic Discord operations room, surrounded by diagnostic screens, tangled cables, warm work lights, and cool blue monitor glow.",
   ];
   const calls = [];

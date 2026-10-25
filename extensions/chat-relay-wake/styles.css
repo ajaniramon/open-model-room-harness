@@ -109,6 +109,12 @@ button.secondary {
   color: #262a30;
 }
 
+button.danger {
+  border-color: #b42318;
+  background: #c02f24;
+  color: #fff;
+}
+
 output {
   min-height: 21px;
   color: #176b51;
@@ -198,6 +204,11 @@ dd {
     border-color: #4b5159;
     background: #22252a;
     color: #eff1f3;
+  }
+
+  button.danger {
+    border-color: #d92d20;
+    background: #b42318;
   }
 
   header,

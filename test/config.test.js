@@ -63,6 +63,8 @@ test("uses a capable Chinese vision sidecar because MiMo is text-only", () => {
   assert.equal(config.visionModel, "qwen3.7-flash:thinking");
   assert.equal(config.visionBaseUrl, "https://nano-gpt.com/api/v1/chat/completions");
   assert.equal(config.visionMaxImages, 4);
+  assert.equal(config.visionMode, "sidecar");
+  assert.equal(config.visionNativeModels.size, 0);
 });
 
 test("loads neutral participation defaults without a private owner", () => {
@@ -73,6 +75,8 @@ test("loads neutral participation defaults without a private owner", () => {
   assert.equal(config.ownerUsernames.size, 0);
   assert.equal(config.runtimeControlEnabled, true);
   assert.equal(config.runtimeControlRestartEnabled, false);
+  assert.equal(config.chatRelay.maxAudioAttachmentBytes, 8_000_000);
+  assert.equal(config.chatRelay.audioFetchTimeoutMs, 30_000);
   assert.deepEqual(config.discordWatchdog, {
     enabled: false,
     graceMs: 90_000,
